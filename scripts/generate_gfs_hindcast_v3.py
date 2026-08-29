@@ -18,11 +18,11 @@ from generate_gfs_day1_v3 import _max_location, _scalar_at, _save_peak_soundings
 
 DEFAULT_HOURS = (0, 6, 12, 18, 24)
 SOUNDING_PRODUCTS = ("severe", "tornado", "hail", "wind")
-# Use RH rather than GFS SPFH for historical pressure-profile reconstruction:
-# in archived pgrb2.0p25 files SPFH is only present on a subset of isobaric
-# levels, whereas RH spans the full thermodynamic profile used by V3. Keeping
-# SPFH in the subset caused xarray to prefer a vertically sparse moisture field
-# and collapsed reconstructed CAPE toward zero.
+# Historical GFS pgrb2 specific humidity is available on a much sparser set of
+# pressure levels than T/RH/wind/height. Pull the full RH profile instead and let
+# thermodynamics_v3 reconstruct q on the common pressure grid. CAPE/CIN remain in
+# the subset only for the legacy V2 compatibility layer; V3 hazard equations do
+# not use native CAPE/CIN.
 HERBIE_SEARCH = r":(CAPE|CIN|TMP|RH|UGRD|VGRD|HGT|VVEL|DPT|PRES|GUST|PWAT|REFC|HLCY|USTM|VSTM):"
 
 
