@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[grib]" matplotlib cartopy
+          pip install -e ".[grib,dev]" matplotlib cartopy
 
       - name: Unit tests
         run: pytest -q
