@@ -41,8 +41,16 @@ def xy(da):
     return np.meshgrid(np.asarray(da.longitude),np.asarray(da.latitude))
 
 
-def clean_mask(mask):
-    return coherent_mask(mask, closing_iterations=1, min_component_cells=2)
+def clean_mask(mask, code_or_threshold=None):
+    # Keep stronger compact maxima while aggressively cleaning weak speckle.
+    strong = False
+    if code_or_threshold is not None:
+        strong = code_or_threshold >= 4 if isinstance(code_or_threshold, int) else code_or_threshold >= 0.30
+    return coherent_mask(
+        mask,
+        closing_iterations=2 if strong else 1,
+        min_component_cells=1 if strong else 3,
+    )
 
 
 def category(ax, ds, cfg):
@@ -50,7 +58,7 @@ def category(ax, ds, cfg):
     lon,lat=xy(cat); val=np.asarray(cat)
     reached=[]
     for code in range(1,7):
-        m=clean_mask(np.isfinite(val)&(val>=code))
+        m=clean_mask(np.isfinite(val)&(val>=code), code)
         if not m.any(): continue
         reached.append(code)
         ax.contourf(lon,lat,np.where(m,1,np.nan),levels=[.5,1.5],colors=[CAT_COLORS[code]],alpha=.72,transform=ccrs.PlateCarree())
@@ -61,8 +69,8 @@ def category(ax, ds, cfg):
 
 def hazard(ax, da, thresholds):
     da=mask_dataarray_to_land(da); lon,lat=xy(da); val=np.asarray(da); reached=[]
-    for idx,t in enumerate(thresholds):
-        m=clean_mask(np.isfinite(val)&(val>=t))
+    for t in thresholds:
+        m=clean_mask(np.isfinite(val)&(val>=t), t)
         if not m.any(): continue
         reached.append(t)
         ax.contourf(lon,lat,np.where(m,1,np.nan),levels=[.5,1.5],colors=[HAZARD_COLORS[t]],alpha=.66,transform=ccrs.PlateCarree())
@@ -83,12 +91,12 @@ def main():
         category(ax,ds,cfg) if name is None else hazard(ax,ds[name],ths)
         b=ax.get_position(); fig.text((b.x0+b.x1)/2,b.y1+.010,title,ha="center",va="bottom",fontsize=11.4,fontweight="bold")
     models=" + ".join(m["models_used"])
-    fig.suptitle("BRAZIL SEVERE WEATHER OUTLOOK — MULTIMODEL CONSENSUS V1",fontsize=20.5,fontweight="bold",y=.955)
+    fig.suptitle("BRAZIL SEVERE WEATHER OUTLOOK — MULTIMODEL CONSENSUS V2",fontsize=20.5,fontweight="bold",y=.955)
     fig.text(.5,.920,f"{models} • CYCLE {m['cycle']} • VALID {m['valid_start']} – {m['valid_end']}",ha="center",fontsize=10.2)
-    fig.text(.5,.887,"DETERMINISTIC MULTIMODEL CONSENSUS • LAND-ONLY • ROBUST MEDIAN + UPPER-SIGNAL PRESERVATION • NOT YET CALIBRATED",ha="center",fontsize=8.5,fontweight="bold",bbox=dict(boxstyle="round,pad=.34",facecolor="#fff0b8",edgecolor="#987a14"))
+    fig.text(.5,.887,"DETERMINISTIC MULTIMODEL CONSENSUS • LAND-ONLY • 75-km SPATIAL AGREEMENT • ORGANIZATION PRESERVATION • NOT YET CALIBRATED",ha="center",fontsize=8.5,fontweight="bold",bbox=dict(boxstyle="round,pad=.34",facecolor="#fff0b8",edgecolor="#987a14"))
     mx=m["maxima"]["CONSENSUS"]
     fig.text(.5,.852,f"CONSENSUS MAXIMA: severe {mx['severe']*100:.1f}% • tornado {mx['tornado']*100:.1f}% • hail {mx['hail']*100:.1f}% • wind {mx['wind']*100:.1f}%",ha="center",fontsize=8.5,color="#444")
-    fig.text(.055,.040,"Pilot multimodel product. Every available model runs the same reconstructed-parcel V3 diagnostics before comparison. V1 uses no permanent fixed model weights; historical verification will later learn model/region/season/lead-time skill. ICON and WRF are not included unless their live/local adapters are available for the common cycle.",fontsize=7.6,color="#50545a",wrap=True)
+    fig.text(.055,.040,"V2 corrects the conservative point-to-point bias found in the 29 Aug 2026 case. Nearby model maxima within 75 km count as regional agreement, while supercell + initiation support can preserve the upper-end severe scenario. Forecast confidence remains separate from risk magnitude. Historical calibration and ICON/WRF are still pending.",fontsize=7.6,color="#50545a",wrap=True)
     out=Path(a.output); out.parent.mkdir(parents=True,exist_ok=True); fig.savefig(out,facecolor="white"); plt.close(fig); print(out)
 
 if __name__=="__main__": main()
