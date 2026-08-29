@@ -1,24 +1,31 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import json
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_config
 from .demo import build_synthetic_probability_fields, demo_valid_period
+from .models.gfs import GFSAdapter
 from .outlook.categories import categorical_outlook
 from .outlook.categorical_geojson import categorical_field_to_geojson
 from .outlook.geojson import probability_field_to_geojson
 from .state import RunState
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+GFS_OUTPUT_ROOT = PROJECT_ROOT / "output" / "gfs"
+
 app = FastAPI(
     title="Brazil Severe Weather Outlook API",
-    version="0.1.0",
+    version="0.2.0",
     description=(
-        "MVP API for an automated severe-convective outlook system. "
-        "Current probability grids are synthetic until live model adapters are connected."
+        "Automated severe-convective outlook API. The live GFS/NOMADS adapter is now "
+        "available; if no generated live product exists on disk, public outlook endpoints "
+        "fall back to the explicitly-labelled synthetic MVP field."
     ),
 )
 
@@ -41,7 +48,36 @@ def _polygon_config() -> tuple[float, float]:
     return float(cfg["simplify_tolerance_deg"]), float(cfg["min_area_deg2"])
 
 
+def _latest_live_file(filename: str) -> Path | None:
+    if not GFS_OUTPUT_ROOT.exists():
+        return None
+    cycle_dirs = sorted(
+        (path for path in GFS_OUTPUT_ROOT.iterdir() if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    for cycle_dir in cycle_dirs:
+        candidate = cycle_dir / filename
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_latest_live_geojson(filename: str) -> dict | None:
+    path = _latest_live_file(filename)
+    if path is None:
+        return None
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    payload.setdefault("properties", {})["served_from"] = str(path.relative_to(PROJECT_ROOT))
+    return payload
+
+
 def _hazard_geojson(product: str) -> dict:
+    live = _read_latest_live_geojson(f"{product}.geojson")
+    if live is not None:
+        return live
+
     cfg = get_config()
     ds = _demo_fields()
     start, end = demo_valid_period()
@@ -77,6 +113,10 @@ def _hazard_geojson(product: str) -> dict:
 
 
 def _categorical_geojson() -> dict:
+    live = _read_latest_live_geojson("categorical.geojson")
+    if live is not None:
+        return live
+
     cfg = get_config()
     ds = _demo_fields()
     start, end = demo_valid_period()
@@ -99,12 +139,36 @@ def _categorical_geojson() -> dict:
     return result
 
 
+def _gfs_status_payload() -> dict:
+    adapter = GFSAdapter()
+    try:
+        cycle = adapter.latest_cycle()
+        hours = adapter.discover_forecast_hours(cycle)
+        return {
+            "configured": True,
+            "connected": True,
+            "source": "NOAA/NCEP NOMADS GFS 0.25 degree",
+            "latest_cycle": cycle.isoformat(),
+            "available_forecast_hours": hours,
+            "available_hour_count": len(hours),
+            "state": RunState.WAITING_FOR_DATA,
+        }
+    except Exception as exc:
+        return {
+            "configured": True,
+            "connected": False,
+            "source": "NOAA/NCEP NOMADS GFS 0.25 degree",
+            "state": RunState.FAILED,
+            "error": str(exc),
+        }
+
+
 @app.get("/")
 def root() -> dict:
     return {
         "name": "Brazil Severe Weather Outlook API",
-        "version": "0.1.0",
-        "status": "MVP",
+        "version": "0.2.0",
+        "status": "LIVE_GFS_INGESTION_MVP",
         "docs": "/docs",
     }
 
@@ -116,17 +180,42 @@ def health() -> dict:
 
 @app.get("/api/models/status")
 def model_status() -> dict:
+    live_product = _latest_live_file("manifest.json")
     return {
-        "state": RunState.WAITING_FOR_DATA,
+        "state": RunState.READY if live_product else RunState.WAITING_FOR_DATA,
         "models": {
-            "GFS": {"connected": False},
-            "GEFS": {"connected": False},
-            "ECMWF": {"connected": False},
-            "EPS": {"connected": False},
-            "ICON": {"connected": False},
-            "WRF": {"connected": False},
+            "GFS": _gfs_status_payload(),
+            "GEFS": {"configured": False, "connected": False},
+            "ECMWF": {"configured": False, "connected": False},
+            "EPS": {"configured": False, "connected": False},
+            "ICON": {"configured": False, "connected": False},
+            "WRF": {"configured": False, "connected": False},
         },
-        "demo_mode": True,
+        "live_gfs_product_available": live_product is not None,
+        "synthetic_fallback_enabled": True,
+    }
+
+
+@app.get("/api/models/gfs/status")
+def gfs_status() -> dict:
+    return _gfs_status_payload()
+
+
+@app.get("/api/models/gfs/subset-url")
+def gfs_subset_url(forecast_hour: int = Query(default=12, ge=0, le=384)) -> dict:
+    adapter = GFSAdapter()
+    cycle = adapter.latest_cycle()
+    available = adapter.discover_forecast_hours(cycle)
+    if forecast_hour not in available:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Forecast hour f{forecast_hour:03d} is not available for {cycle:%Y%m%d%H}",
+        )
+    return {
+        "model": "GFS 0.25",
+        "cycle": cycle.isoformat(),
+        "forecast_hour": forecast_hour,
+        "url": adapter.subset_url(cycle, forecast_hour),
     }
 
 
