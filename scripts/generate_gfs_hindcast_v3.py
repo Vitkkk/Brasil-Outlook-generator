@@ -18,7 +18,10 @@ from generate_gfs_day1_v3 import _max_location, _scalar_at, _save_peak_soundings
 
 DEFAULT_HOURS = (0, 6, 12, 18, 24)
 SOUNDING_PRODUCTS = ("severe", "tornado", "hail", "wind")
-HERBIE_SEARCH = r":(TMP|SPFH|RH|UGRD|VGRD|HGT|VVEL|DPT|PRES|GUST|PWAT|REFC|HLCY|USTM|VSTM):"
+# V3 reconstructs parcel thermodynamics itself, but the current V2 kinematic
+# compatibility layer still expects native CAPE/CIN to be present. Keep them in
+# the historical byte-range subset until that dependency is removed.
+HERBIE_SEARCH = r":(CAPE|CIN|TMP|SPFH|RH|UGRD|VGRD|HGT|VVEL|DPT|PRES|GUST|PWAT|REFC|HLCY|USTM|VSTM):"
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,9 +60,6 @@ def historical_grib(cycle: datetime, hour: int, destination: Path) -> Path:
         raise RuntimeError("Historical GFS mode requires the 'herbie-data' package") from exc
 
     destination.mkdir(parents=True, exist_ok=True)
-    # Herbie currently compares its date against naive UTC datetimes internally,
-    # so pass an explicitly UTC-but-naive timestamp while retaining aware UTC
-    # metadata everywhere else in the hindcast pipeline.
     herbie_cycle = cycle.astimezone(timezone.utc).replace(tzinfo=None)
     h = Herbie(herbie_cycle, model="gfs", product="pgrb2.0p25", fxx=int(hour), save_dir=destination)
     path = h.download(HERBIE_SEARCH, save_dir=destination, overwrite=False)
