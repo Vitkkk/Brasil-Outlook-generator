@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
+import time
 
 import numpy as np
 import xarray as xr
@@ -63,9 +64,47 @@ def historical_grib(cycle: datetime, hour: int, destination: Path) -> Path:
 
     destination.mkdir(parents=True, exist_ok=True)
     herbie_cycle = cycle.astimezone(timezone.utc).replace(tzinfo=None)
-    h = Herbie(herbie_cycle, model="gfs", product="pgrb2.0p25", fxx=int(hour), save_dir=destination)
-    path = h.download(HERBIE_SEARCH, save_dir=destination, overwrite=False)
-    return Path(path)
+
+    # NOAA's public GFS archive occasionally times out while Herbie is issuing
+    # byte-range subset requests. A transient timeout should not invalidate a
+    # ten-minute hindcast after the earlier forecast hours have already decoded.
+    # Recreate the Herbie object for every attempt and overwrite a possible
+    # partial subset after the first failure.
+    delays = (8, 20, 45, 75)
+    last_error: Exception | None = None
+    for attempt in range(len(delays) + 1):
+        try:
+            h = Herbie(
+                herbie_cycle,
+                model="gfs",
+                product="pgrb2.0p25",
+                fxx=int(hour),
+                save_dir=destination,
+            )
+            path = h.download(
+                HERBIE_SEARCH,
+                save_dir=destination,
+                overwrite=attempt > 0,
+            )
+            result = Path(path)
+            if not result.exists() or result.stat().st_size < 1024:
+                raise RuntimeError(f"Historical GFS f{hour:03d} subset is missing or too small: {result}")
+            return result
+        except Exception as exc:  # Herbie wraps requests/network errors in RuntimeError.
+            last_error = exc
+            if attempt >= len(delays):
+                break
+            wait = delays[attempt]
+            print(
+                f"Historical GFS f{hour:03d} download attempt {attempt + 1} failed: {exc}. "
+                f"Retrying in {wait}s...",
+                flush=True,
+            )
+            time.sleep(wait)
+
+    raise RuntimeError(
+        f"Historical GFS f{hour:03d} failed after {len(delays) + 1} attempts"
+    ) from last_error
 
 
 def main() -> None:
