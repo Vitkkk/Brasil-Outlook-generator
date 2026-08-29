@@ -109,11 +109,9 @@ def _drop_scalar_vertical_coords(ds: xr.Dataset) -> xr.Dataset:
 def _canonicalize_pressure_dimension(ds: xr.Dataset) -> xr.Dataset:
     """Normalize cfgrib pressure coordinates to one hPa dimension.
 
-    Historical GFS GRIB subsets can decode some fields on ``isobaricInPa`` and
-    others on ``isobaricInhPa``. Leaving both dimensions in one merged Dataset
-    causes downstream routines to pair a 33-level coordinate with an 8-level
-    variable (and can silently collapse diagnostics toward zero). Convert every
-    pressure-profile group to the same ``isobaricInhPa`` coordinate before merge.
+    GFS GRIBs split lower/mid-tropospheric and very-high-atmosphere records
+    between ``isobaricInhPa`` and ``isobaricInPa`` groups. They must share one
+    coordinate before the profile pieces can be combined safely.
     """
     if "isobaricInPa" in ds.dims:
         values = np.asarray(ds["isobaricInPa"], dtype=float) / 100.0
@@ -130,7 +128,6 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
         valid = ds["valid_time"].values
         ds = ds.expand_dims(valid_time=[valid])
 
-    # Pressure-level profile group: retain one canonical hPa pressure dimension.
     if "isobaricInhPa" in ds.dims or "isobaricInPa" in ds.dims:
         ds = _canonicalize_pressure_dimension(ds)
         ds = _rename_existing(
@@ -177,9 +174,6 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
         )
         return _drop_scalar_vertical_coords(ds)
 
-    # These fields have unique short names but are spread across several GRIB
-    # level types. Surface HGT is exposed as terrain_height so diagnostics can
-    # interpolate pressure-level profiles to AGL heights.
     ds = _rename_existing(
         ds,
         {
@@ -199,6 +193,23 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
         },
     )
     return _drop_scalar_vertical_coords(ds)
+
+
+def _merge_cfgrib_groups(groups: list[xr.Dataset]) -> xr.Dataset:
+    """Merge GRIB groups while preserving complementary pressure-level records.
+
+    ``xr.merge(..., compat='override')`` is unsafe here: after canonicalizing the
+    Pa/hPa dimensions, two groups can carry the same variable on complementary
+    pressure ranges. ``override`` keeps whichever group appears first and fills
+    the rest of the union coordinate with NaNs. For RH this meant the historical
+    hindcast could retain only the near-stratospheric zero-RH fragment and throw
+    away the moist tropospheric profile. ``combine_first`` aligns coordinates and
+    fills missing values from each subsequent GRIB group instead.
+    """
+    merged = groups[0]
+    for group in groups[1:]:
+        merged = merged.combine_first(group)
+    return merged
 
 
 class GFSAdapter(ModelAdapter):
@@ -261,14 +272,11 @@ class GFSAdapter(ModelAdapter):
         if not groups:
             raise RuntimeError("No GRIB datasets were decoded")
 
-        merged = xr.merge(groups, compat="override", join="outer")
+        merged = _merge_cfgrib_groups(groups)
         merged.attrs.update(model="GFS", native_grid="0.25_degree")
         return merged
 
     def standardize(self, dataset: xr.Dataset) -> xr.Dataset:
-        # Most useful fields are already standardized group-by-group so that 10-m
-        # wind and pressure-level wind cannot overwrite each other. The base
-        # adapter still normalizes latitude/longitude conventions here.
         ds = super().standardize(dataset)
         ds.attrs.update(model="GFS", native_grid="0.25_degree")
         return ds
