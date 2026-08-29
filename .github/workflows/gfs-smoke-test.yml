@@ -42,22 +42,30 @@ jobs:
           PYTHONPATH: backend
         run: |
           OUTDIR=$(find output/gfs -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
-          python - "$OUTDIR" <<'PY' > /tmp/render_env
-          import json, pathlib, sys
+          python - "$OUTDIR" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
           p = pathlib.Path(sys.argv[1])
           m = json.loads((p / "manifest.json").read_text())
           cycle = m["cycle"].replace("+00:00", "Z")
           valid = f'{m["valid_start"].replace("+00:00", "Z")} – {m["valid_end"].replace("+00:00", "Z")}'
-          print(f'OUTDIR={p}')
-          print(f'CYCLE={cycle}')
-          print(f'VALID={valid}')
+          subprocess.run(
+              [
+                  sys.executable,
+                  "scripts/render_gfs_day1.py",
+                  str(p / "gfs_day1_proxy_fields.nc"),
+                  str(p / "brazil_gfs_day1_outlook.png"),
+                  "--cycle",
+                  cycle,
+                  "--valid",
+                  valid,
+              ],
+              check=True,
+          )
           PY
-          source /tmp/render_env
-          python scripts/render_gfs_day1.py \
-            "$OUTDIR/gfs_day1_proxy_fields.nc" \
-            "$OUTDIR/brazil_gfs_day1_outlook.png" \
-            --cycle "$CYCLE" \
-            --valid "$VALID"
 
       - name: Upload GFS outlook artifact
         uses: actions/upload-artifact@v4
