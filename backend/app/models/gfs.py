@@ -106,16 +106,33 @@ def _drop_scalar_vertical_coords(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
+def _canonicalize_pressure_dimension(ds: xr.Dataset) -> xr.Dataset:
+    """Normalize cfgrib pressure coordinates to one hPa dimension.
+
+    Historical GFS GRIB subsets can decode some fields on ``isobaricInPa`` and
+    others on ``isobaricInhPa``. Leaving both dimensions in one merged Dataset
+    causes downstream routines to pair a 33-level coordinate with an 8-level
+    variable (and can silently collapse diagnostics toward zero). Convert every
+    pressure-profile group to the same ``isobaricInhPa`` coordinate before merge.
+    """
+    if "isobaricInPa" in ds.dims:
+        values = np.asarray(ds["isobaricInPa"], dtype=float) / 100.0
+        ds = ds.assign_coords(isobaricInPa=values)
+        if "isobaricInhPa" in ds.dims:
+            raise ValueError("A single cfgrib group unexpectedly contains both pressure dimensions")
+        ds = ds.rename({"isobaricInPa": "isobaricInhPa"})
+    return ds
+
+
 def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
     """Give every useful cfgrib group collision-free standardized names."""
     if "valid_time" in ds.coords and ds["valid_time"].ndim == 0:
         valid = ds["valid_time"].values
         ds = ds.expand_dims(valid_time=[valid])
 
-    # Pressure-level profile group: retain the pressure dimension. Specific
-    # humidity is the preferred moisture variable for V3 thermodynamics; RH is
-    # retained as a fallback and for later diagnostics.
+    # Pressure-level profile group: retain one canonical hPa pressure dimension.
     if "isobaricInhPa" in ds.dims or "isobaricInPa" in ds.dims:
+        ds = _canonicalize_pressure_dimension(ds)
         ds = _rename_existing(
             ds,
             {
