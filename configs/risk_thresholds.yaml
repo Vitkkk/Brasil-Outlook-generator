@@ -1,0 +1,39 @@
+# Initial, non-operational thresholds. These values are configuration defaults only
+# and MUST be recalibrated against South American observations before operational use.
+
+categorical:
+  TSTM:
+    severe_any_probability_min: 0.00
+    thunderstorm_probability_min: 0.10
+  MRGL:
+    severe_any_probability_min: 0.05
+  SLGT:
+    severe_any_probability_min: 0.15
+  ENH:
+    severe_any_probability_min: 0.30
+  MDT:
+    severe_any_probability_min: 0.45
+  HIGH:
+    severe_any_probability_min: 0.60
+
+hazards:
+  tornado:
+    contours: [0.02, 0.05, 0.10, 0.15, 0.30, 0.45, 0.60]
+    significant_reference_probability: 0.10
+  hail:
+    contours: [0.02, 0.05, 0.15, 0.30, 0.45, 0.60]
+    significant_size_cm: 5.0
+  wind:
+    contours: [0.02, 0.05, 0.15, 0.30, 0.45, 0.60]
+    significant_speed_kmh: 120.0
+
+confidence:
+  very_low_max: 0.20
+  low_max: 0.40
+  moderate_max: 0.60
+  high_max: 0.80
+  very_high_max: 1.00
+
+polygonization:
+  simplify_tolerance_deg: 0.05
+  min_area_deg2: 0.04
