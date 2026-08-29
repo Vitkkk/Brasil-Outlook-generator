@@ -18,15 +18,17 @@ def build_synthetic_probability_fields() -> xr.Dataset:
     """Synthetic fields for exercising the pipeline before live model ingestion.
 
     These are deliberately labelled demo data and must never be interpreted as
-    a real forecast.
+    a real forecast. The synthetic grid is intentionally coarser than the
+    configured operational grid so GeoJSON polygonization stays lightweight.
     """
 
     cfg = get_config().domain
-    lats = np.arange(cfg.south, cfg.north + cfg.grid_resolution_deg, cfg.grid_resolution_deg)
-    lons = np.arange(cfg.west, cfg.east + cfg.grid_resolution_deg, cfg.grid_resolution_deg)
+    step = max(cfg.grid_resolution_deg, 0.25)
+    lats = np.arange(cfg.south, cfg.north + step, step)
+    lons = np.arange(cfg.west, cfg.east + step, step)
     lon2d, lat2d = np.meshgrid(lons, lats)
 
-    # A few smooth synthetic maxima over southern/central South America make it
+    # Smooth synthetic maxima over southern/central South America make it
     # possible to test nested polygons and UI rendering without external data.
     core = _gaussian(lon2d, lat2d, -52.5, -27.5, 4.5, 3.0, 0.55)
     secondary = _gaussian(lon2d, lat2d, -59.0, -34.0, 3.8, 2.5, 0.24)
@@ -48,6 +50,7 @@ def build_synthetic_probability_fields() -> xr.Dataset:
         coords={"latitude": lats, "longitude": lons},
     )
     ds.attrs["source"] = "synthetic_mvp"
+    ds.attrs["grid_resolution_deg"] = step
     return ds
 
 
