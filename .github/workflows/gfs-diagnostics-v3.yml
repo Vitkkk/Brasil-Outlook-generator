@@ -1,0 +1,100 @@
+name: GFS Diagnostics V3 thermodynamics outlook
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/diagnostics/thermodynamics_v3.py"
+      - "backend/app/hazards/gfs_diagnostics_v3.py"
+      - "backend/app/models/gfs.py"
+      - "scripts/generate_gfs_day1_v3.py"
+      - "scripts/render_gfs_day1_v3.py"
+      - "tests/test_gfs_thermodynamics_v3.py"
+      - ".github/workflows/gfs-diagnostics-v3.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[grib,dev]" matplotlib cartopy
+
+      - name: Unit tests
+        run: pytest -q
+
+      - name: Generate live GFS Diagnostics V3 Day-1 outlook
+        env:
+          PYTHONPATH: backend
+        run: |
+          python scripts/generate_gfs_day1_v3.py --hours 0,3,6,9,12,15,18,21,24
+
+      - name: Render V3 outlook and thermodynamic diagnostics
+        env:
+          PYTHONPATH: backend
+        run: |
+          OUTDIR=$(find output/gfs-v3 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+          python - "$OUTDIR" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          p = pathlib.Path(sys.argv[1])
+          m = json.loads((p / "manifest.json").read_text())
+          cycle = m["cycle"].replace("+00:00", "Z")
+          valid = f'{m["valid_start"].replace("+00:00", "Z")} – {m["valid_end"].replace("+00:00", "Z")}'
+          subprocess.run(
+              [
+                  sys.executable,
+                  "scripts/render_gfs_day1_v3.py",
+                  str(p / "gfs_day1_diagnostics_v3.nc"),
+                  str(p / "brazil_gfs_day1_outlook_v3.png"),
+                  "--cycle",
+                  cycle,
+                  "--valid",
+                  valid,
+                  "--manifest",
+                  str(p / "manifest.json"),
+                  "--thermo-output",
+                  str(p / "brazil_gfs_thermodynamics_v3.png"),
+              ],
+              check=True,
+          )
+          PY
+
+      - name: Upload V3 outlook artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gfs-diagnostics-v3-outlook
+          path: |
+            output/gfs-v3/**/brazil_gfs_day1_outlook_v3.png
+            output/gfs-v3/**/brazil_gfs_thermodynamics_v3.png
+            output/gfs-v3/**/gfs_day1_diagnostics_v3.nc
+            output/gfs-v3/**/categorical.geojson
+            output/gfs-v3/**/tornado.geojson
+            output/gfs-v3/**/hail.geojson
+            output/gfs-v3/**/wind.geojson
+            output/gfs-v3/**/supercell.geojson
+            output/gfs-v3/**/qlcs.geojson
+            output/gfs-v3/**/convective_initiation.geojson
+            output/gfs-v3/**/sig_tornado_support.geojson
+            output/gfs-v3/**/manifest.json
+          if-no-files-found: error
+          retention-days: 7
