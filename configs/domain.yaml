@@ -1,0 +1,22 @@
+domain:
+  name: south_america_operational
+  north: 15.0
+  south: -60.0
+  west: -90.0
+  east: -25.0
+  grid_resolution_deg: 0.10
+  probability_radius_km: 40.0
+
+forecast_windows:
+  day1: [0, 24]
+  day2: [24, 48]
+  day3: [48, 72]
+  blocks_utc:
+    - [0, 6]
+    - [6, 12]
+    - [12, 18]
+    - [18, 24]
+
+publication:
+  require_critical_variables: true
+  min_model_count: 2
