@@ -87,7 +87,11 @@ def draw_category(ax, severe: xr.DataArray, thunderstorm: xr.DataArray, cfg):
 
     for code in range(1, 7):
         raw_mask = np.isfinite(values) & (values >= code)
-        mask = coherent_mask(raw_mask, closing_iterations=closing, min_component_cells=min_cells)
+        # Broad low-end fields are cleaned aggressively; compact ENH/MDT/HIGH
+        # maxima are retained and allowed to merge across tiny gaps instead of
+        # being discarded merely because the GFS maximum occupies 1–2 cells.
+        component_cells = 1 if code >= 4 else min_cells
+        mask = coherent_mask(raw_mask, closing_iterations=closing, min_component_cells=component_cells)
         if not mask.any():
             continue
         reached.append(code)
