@@ -60,11 +60,16 @@ def categorical_field_to_geojson(
         ]
         if not cells:
             continue
+
+        # Broad low-end noise is filtered harder. Small ENH/MDT/HIGH cores are
+        # retained because a compact high-end maximum can be meteorologically
+        # meaningful even when it occupies only one or two 0.25-degree cells.
+        category_min_area = min_area_deg2 if code <= 3 else min_area_deg2 * 0.30
         merged = _coherent_geometry(
             cells,
             bridge_gap_deg=bridge_gap_deg,
             simplify_tolerance_deg=simplify_tolerance_deg,
-            min_area_deg2=min_area_deg2,
+            min_area_deg2=category_min_area,
             land_only=land_only,
         )
         if merged is None:
