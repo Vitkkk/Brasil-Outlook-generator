@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - '.github/workflows/gfs-hindcast-20251107.yml'
+      - 'scripts/generate_gfs_hindcast_v3.py'
+      - 'scripts/render_gfs_hindcast_v3.py'
   workflow_dispatch:
 
 jobs:
