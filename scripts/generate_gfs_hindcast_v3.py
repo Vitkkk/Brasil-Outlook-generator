@@ -4,7 +4,6 @@ import argparse
 from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
-import sys
 
 import numpy as np
 import xarray as xr
@@ -15,18 +14,10 @@ from app.models.gfs import GFSAdapter
 from app.outlook.categories import categorical_outlook
 from app.outlook.categorical_geojson import categorical_field_to_geojson
 from app.outlook.geojson import probability_field_to_geojson
-
-# Reuse the peak-sounding helpers from the live V3 generator so hindcasts and
-# operational runs package identical sounding metadata.
 from generate_gfs_day1_v3 import _max_location, _scalar_at, _save_peak_soundings, _safe_max, _safe_min
-
 
 DEFAULT_HOURS = (0, 6, 12, 18, 24)
 SOUNDING_PRODUCTS = ("severe", "tornado", "hail", "wind")
-
-# Herbie searches the GRIB inventory before downloading, so this retrieves the
-# meteorological fields required by Diagnostics V3 without downloading every GFS
-# field in the global pgrb2 file. The result is then cropped to South America.
 HERBIE_SEARCH = r":(TMP|SPFH|RH|UGRD|VGRD|HGT|VVEL|DPT|PRES|GUST|PWAT|REFC|HLCY|USTM|VSTM):"
 
 
@@ -66,9 +57,11 @@ def historical_grib(cycle: datetime, hour: int, destination: Path) -> Path:
         raise RuntimeError("Historical GFS mode requires the 'herbie-data' package") from exc
 
     destination.mkdir(parents=True, exist_ok=True)
-    # Herbie checks the NOAA/NODD archives (AWS/Google and fallbacks) and uses
-    # the GRIB index for byte-range subsetting where available.
-    h = Herbie(cycle, model="gfs", product="pgrb2.0p25", fxx=int(hour), save_dir=destination)
+    # Herbie currently compares its date against naive UTC datetimes internally,
+    # so pass an explicitly UTC-but-naive timestamp while retaining aware UTC
+    # metadata everywhere else in the hindcast pipeline.
+    herbie_cycle = cycle.astimezone(timezone.utc).replace(tzinfo=None)
+    h = Herbie(herbie_cycle, model="gfs", product="pgrb2.0p25", fxx=int(hour), save_dir=destination)
     path = h.download(HERBIE_SEARCH, save_dir=destination, overwrite=False)
     return Path(path)
 
