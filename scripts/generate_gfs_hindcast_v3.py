@@ -18,10 +18,12 @@ from generate_gfs_day1_v3 import _max_location, _scalar_at, _save_peak_soundings
 
 DEFAULT_HOURS = (0, 6, 12, 18, 24)
 SOUNDING_PRODUCTS = ("severe", "tornado", "hail", "wind")
-# V3 reconstructs parcel thermodynamics itself, but the current V2 kinematic
-# compatibility layer still expects native CAPE/CIN to be present. Keep them in
-# the historical byte-range subset until that dependency is removed.
-HERBIE_SEARCH = r":(CAPE|CIN|TMP|SPFH|RH|UGRD|VGRD|HGT|VVEL|DPT|PRES|GUST|PWAT|REFC|HLCY|USTM|VSTM):"
+# Use RH rather than GFS SPFH for historical pressure-profile reconstruction:
+# in archived pgrb2.0p25 files SPFH is only present on a subset of isobaric
+# levels, whereas RH spans the full thermodynamic profile used by V3. Keeping
+# SPFH in the subset caused xarray to prefer a vertically sparse moisture field
+# and collapsed reconstructed CAPE toward zero.
+HERBIE_SEARCH = r":(CAPE|CIN|TMP|RH|UGRD|VGRD|HGT|VVEL|DPT|PRES|GUST|PWAT|REFC|HLCY|USTM|VSTM):"
 
 
 def parse_args() -> argparse.Namespace:
