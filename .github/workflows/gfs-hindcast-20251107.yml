@@ -6,6 +6,11 @@ on:
       - '.github/workflows/gfs-hindcast-20251107.yml'
       - 'scripts/generate_gfs_hindcast_v3.py'
       - 'scripts/render_gfs_hindcast_v3.py'
+      - 'scripts/render_gfs_soundings_v3.py'
+      - 'backend/app/models/gfs.py'
+      - 'backend/app/diagnostics/thermodynamics_v3.py'
+      - 'backend/app/hazards/gfs_diagnostics_v2.py'
+      - 'backend/app/hazards/gfs_diagnostics_v3.py'
   workflow_dispatch:
 
 jobs:
