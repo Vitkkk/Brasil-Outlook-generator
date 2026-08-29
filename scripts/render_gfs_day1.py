@@ -50,12 +50,22 @@ def lon_lat(da: xr.DataArray) -> tuple[np.ndarray, np.ndarray]:
     return np.meshgrid(lon, lat)
 
 
-def setup_axis(ax):
+def setup_axis(ax, *, left_labels: bool, bottom_labels: bool):
     ax.set_extent([-68, -34, -42, -14], crs=ccrs.PlateCarree())
     ax.add_feature(cfeature.LAND.with_scale("50m"), facecolor="white", zorder=0)
     ax.add_feature(cfeature.OCEAN.with_scale("50m"), facecolor="#f5f6f7", zorder=0)
-    ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.65, edgecolor="#555555", zorder=5)
-    ax.add_feature(cfeature.BORDERS.with_scale("50m"), linewidth=0.65, edgecolor="#666666", zorder=5)
+    ax.add_feature(
+        cfeature.COASTLINE.with_scale("50m"),
+        linewidth=0.65,
+        edgecolor="#555555",
+        zorder=5,
+    )
+    ax.add_feature(
+        cfeature.BORDERS.with_scale("50m"),
+        linewidth=0.65,
+        edgecolor="#666666",
+        zorder=5,
+    )
     try:
         states = cfeature.NaturalEarthFeature(
             category="cultural",
@@ -66,9 +76,12 @@ def setup_axis(ax):
         ax.add_feature(states, linewidth=0.40, edgecolor="#808080", zorder=5)
     except Exception:
         pass
+
     gl = ax.gridlines(draw_labels=True, linewidth=0.25, color="#c8ccd2", alpha=0.65)
     gl.top_labels = False
     gl.right_labels = False
+    gl.left_labels = left_labels
+    gl.bottom_labels = bottom_labels
     gl.xlabel_style = {"size": 7}
     gl.ylabel_style = {"size": 7}
 
@@ -82,6 +95,7 @@ def draw_category(
     cat = categorical_outlook(severe, thunderstorm, cfg.risk_thresholds)
     lon2d, lat2d = lon_lat(cat)
     values = np.asarray(cat)
+
     for code in range(1, 7):
         mask = np.where(values >= code, 1.0, np.nan)
         if np.isfinite(mask).any():
@@ -105,6 +119,7 @@ def draw_category(
                 transform=ccrs.PlateCarree(),
                 zorder=4,
             )
+
     handles = [
         Patch(facecolor=CAT_COLORS[c], edgecolor="#555555", label=CAT_NAMES[c])
         for c in range(1, 7)
@@ -118,6 +133,7 @@ def draw_category(
             fontsize=7,
             title="Risk Category",
             title_fontsize=8,
+            framealpha=0.95,
         )
 
 
@@ -125,6 +141,7 @@ def draw_hazard(ax, field: xr.DataArray, thresholds: list[float]):
     lon2d, lat2d = lon_lat(field)
     values = np.asarray(field)
     reached = [t for t in thresholds if np.nanmax(values) >= t]
+
     for idx, thr in enumerate(reached):
         ax.contourf(
             lon2d,
@@ -146,8 +163,9 @@ def draw_hazard(ax, field: xr.DataArray, thresholds: list[float]):
             transform=ccrs.PlateCarree(),
             zorder=4,
         )
+
     handles = [
-        Patch(facecolor=HAZARD_COLORS[t], edgecolor="#555555", label=f"{int(t*100)}%")
+        Patch(facecolor=HAZARD_COLORS[t], edgecolor="#555555", label=f"{int(t * 100)}%")
         for t in reached
     ]
     if handles:
@@ -158,6 +176,7 @@ def draw_hazard(ax, field: xr.DataArray, thresholds: list[float]):
             fontsize=7,
             title="Probability within 40 km",
             title_fontsize=8,
+            framealpha=0.95,
         )
 
 
@@ -166,17 +185,21 @@ def main() -> None:
     cfg = get_config()
     ds = xr.open_dataset(args.netcdf)
 
-    fig = plt.figure(figsize=(18, 12), dpi=160)
+    # A near-square product is much safer in mobile/app previews than the old
+    # 18x12 canvas. Explicit margins plus no bbox_inches='tight' prevent the
+    # right-hand Tornado/Wind panels from being clipped by Cartopy labels.
+    fig = plt.figure(figsize=(14, 14), dpi=150, facecolor="white")
     gs = fig.add_gridspec(
         2,
         2,
-        left=0.04,
-        right=0.985,
-        bottom=0.075,
-        top=0.84,
-        wspace=0.05,
-        hspace=0.08,
+        left=0.055,
+        right=0.955,
+        bottom=0.085,
+        top=0.825,
+        wspace=0.10,
+        hspace=0.12,
     )
+
     projection = ccrs.PlateCarree()
     products = [
         ("CATEGORICAL CONVECTIVE OUTLOOK", "categorical", None),
@@ -186,9 +209,12 @@ def main() -> None:
     ]
 
     for i, (title, name, thresholds) in enumerate(products):
-        ax = fig.add_subplot(gs[i // 2, i % 2], projection=projection)
-        setup_axis(ax)
-        ax.set_title(title, fontsize=11.5, fontweight="bold", pad=6)
+        row = i // 2
+        col = i % 2
+        ax = fig.add_subplot(gs[row, col], projection=projection)
+        setup_axis(ax, left_labels=(col == 0), bottom_labels=(row == 1))
+        ax.set_title(title, fontsize=11.2, fontweight="bold", pad=6)
+
         if name == "categorical":
             draw_category(ax, ds["severe"], ds["thunderstorm"], cfg)
         else:
@@ -196,36 +222,41 @@ def main() -> None:
 
     fig.suptitle(
         "BRAZIL SEVERE WEATHER OUTLOOK — GFS PROXY V1",
-        fontsize=22,
+        fontsize=21,
         fontweight="bold",
-        y=0.96,
+        y=0.965,
     )
     fig.text(
         0.5,
-        0.92,
+        0.925,
         f"GFS 0.25° • CYCLE {args.cycle} • VALID {args.valid}",
         ha="center",
-        fontsize=11,
+        fontsize=10.5,
     )
     fig.text(
         0.5,
-        0.888,
+        0.895,
         "FIRST LIVE-GFS SMOKE TEST • PROXY PROBABILITIES NOT YET CALIBRATED",
         ha="center",
-        fontsize=9.5,
+        fontsize=9.2,
         fontweight="bold",
         bbox=dict(boxstyle="round,pad=0.34", facecolor="#fff0b8", edgecolor="#987a14"),
     )
     fig.text(
-        0.04,
+        0.055,
         0.035,
-        "Source: NOAA/NCEP GFS via NOMADS subset ingestion. Proxy v1 uses native CAPE/CIN, pressure-level wind/temperature/height, helicity, PWAT, reflectivity and gust features.",
-        fontsize=8.2,
+        (
+            "Source: NOAA/NCEP GFS via NOMADS subset ingestion. Proxy v1 uses native "
+            "CAPE/CIN, pressure-level wind/temperature/height, helicity, PWAT, "
+            "reflectivity and gust features."
+        ),
+        fontsize=7.8,
         color="#50545a",
     )
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, bbox_inches="tight")
+    fig.savefig(output, facecolor="white")
     plt.close(fig)
     print(output)
 
