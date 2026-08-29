@@ -35,5 +35,10 @@ confidence:
   very_high_max: 1.00
 
 polygonization:
-  simplify_tolerance_deg: 0.05
-  min_area_deg2: 0.04
+  # Product presentation only: the raw NetCDF probability grids are untouched.
+  simplify_tolerance_deg: 0.08
+  min_area_deg2: 0.10
+  bridge_gap_deg: 0.35
+  land_only: true
+  presentation_closing_iterations: 1
+  presentation_min_component_cells: 3
