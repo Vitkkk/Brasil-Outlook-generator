@@ -18,10 +18,9 @@ from ..ingestion.nomads import (
 from .base_adapter import ModelAdapter
 
 
-# Focused manifest for the live convective pipeline. Native CAPE/CIN are retained
-# as useful model guidance, while V2 diagnostics reconstruct wind/temperature
-# structure from pressure-level profiles instead of treating a single index as
-# the forecast decision.
+# Live severe-convective manifest. V3 adds pressure-level specific humidity and a
+# denser vertical pressure grid so parcel thermodynamics can be reconstructed
+# from the model sounding instead of relying on native CAPE/CIN products.
 GFS_VARIABLES = (
     "CAPE",
     "CIN",
@@ -29,9 +28,11 @@ GFS_VARIABLES = (
     "GUST",
     "HGT",
     "HLCY",
+    "PRES",
     "PWAT",
     "REFC",
     "RH",
+    "SPFH",
     "TMP",
     "UGRD",
     "USTM",
@@ -40,6 +41,9 @@ GFS_VARIABLES = (
     "VVEL",
 )
 
+# 50-hPa spacing through most of the troposphere, with extra 25-hPa levels near
+# the surface, gives substantially better parcel/LCL/CIN reconstruction while
+# keeping the South-America NOMADS subset small enough for operational testing.
 GFS_LEVELS = (
     "surface",
     "2_m_above_ground",
@@ -47,12 +51,24 @@ GFS_LEVELS = (
     "3000-0_m_above_ground",
     "6000-0_m_above_ground",
     "1000_mb",
+    "975_mb",
+    "950_mb",
     "925_mb",
+    "900_mb",
     "850_mb",
+    "800_mb",
+    "750_mb",
     "700_mb",
+    "650_mb",
+    "600_mb",
+    "550_mb",
     "500_mb",
+    "450_mb",
+    "400_mb",
+    "350_mb",
     "300_mb",
     "250_mb",
+    "200_mb",
     "entire_atmosphere_(considered_as_a_single_layer)",
 )
 
@@ -96,7 +112,9 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
         valid = ds["valid_time"].values
         ds = ds.expand_dims(valid_time=[valid])
 
-    # Pressure-level profile group: retain the pressure dimension.
+    # Pressure-level profile group: retain the pressure dimension. Specific
+    # humidity is the preferred moisture variable for V3 thermodynamics; RH is
+    # retained as a fallback and for later diagnostics.
     if "isobaricInhPa" in ds.dims or "isobaricInPa" in ds.dims:
         ds = _rename_existing(
             ds,
@@ -123,6 +141,7 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
                 "d2m": "dewpoint_2m",
                 "2t": "temperature_2m",
                 "2d": "dewpoint_2m",
+                "q": "specific_humidity_2m",
             },
         )
         return _drop_scalar_vertical_coords(ds)
@@ -158,6 +177,7 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
             "orog": "terrain_height",
             "gh": "terrain_height",
             "sp": "surface_air_pressure",
+            "pres": "surface_air_pressure",
             "prmsl": "air_pressure_at_mean_sea_level",
         },
     )
