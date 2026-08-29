@@ -162,10 +162,41 @@ def gfs_proxy_probabilities(ds: xr.Dataset) -> xr.Dataset:
     return result
 
 
+def _collapse_single_valid_time(ds: xr.Dataset) -> xr.Dataset:
+    """Remove per-file forecast-valid-time axis before Day-1 aggregation.
+
+    Every GRIB file in this smoke-test path represents one forecast valid time.
+    Keeping that one-element dimension while concatenating several files makes
+    xarray align all distinct valid times into a second axis, leaving a 3-D field
+    after the forecast-sample maximum. Outlook polygonization expects a 2-D
+    latitude/longitude field, so normalize each sample first.
+    """
+    if "valid_time" not in ds.dims:
+        return ds
+    if ds.sizes["valid_time"] == 1:
+        return ds.isel(valid_time=0, drop=True)
+    # Defensive fallback for a future adapter that passes more than one valid
+    # time in a single sample. Reduce to the maximum hazard signal for Day 1.
+    return ds.max("valid_time", skipna=True)
+
+
 def aggregate_day1_max(hourly: list[xr.Dataset]) -> xr.Dataset:
     if not hourly:
         raise ValueError("At least one forecast dataset is required")
-    stacked = xr.concat(hourly, dim="forecast_sample")
+
+    normalized: list[xr.Dataset] = []
+    for sample_index, ds in enumerate(hourly):
+        work = _collapse_single_valid_time(ds)
+        work = work.expand_dims(forecast_sample=[sample_index])
+        normalized.append(work)
+
+    stacked = xr.concat(
+        normalized,
+        dim="forecast_sample",
+        join="exact",
+        compat="override",
+        coords="minimal",
+    )
     products = [
         "thunderstorm",
         "severe",
@@ -175,7 +206,9 @@ def aggregate_day1_max(hourly: list[xr.Dataset]) -> xr.Dataset:
         "convective_initiation",
         "supercell",
     ]
-    output = xr.Dataset({name: stacked[name].max("forecast_sample", skipna=True) for name in products})
+    output = xr.Dataset(
+        {name: stacked[name].max("forecast_sample", skipna=True) for name in products}
+    )
     output.attrs.update(hourly[0].attrs)
     output.attrs["aggregation"] = "maximum across sampled Day-1 forecast hours"
     return output
