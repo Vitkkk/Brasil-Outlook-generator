@@ -73,8 +73,13 @@ def setup_axis(ax):
     gl.ylabel_style = {"size": 7}
 
 
-def draw_category(ax, field: xr.DataArray, cfg):
-    cat = categorical_outlook(field, field * 0 + 1.0, cfg.risk_thresholds)
+def draw_category(
+    ax,
+    severe: xr.DataArray,
+    thunderstorm: xr.DataArray,
+    cfg,
+):
+    cat = categorical_outlook(severe, thunderstorm, cfg.risk_thresholds)
     lon2d, lat2d = lon_lat(cat)
     values = np.asarray(cat)
     for code in range(1, 7):
@@ -105,7 +110,15 @@ def draw_category(ax, field: xr.DataArray, cfg):
         for c in range(1, 7)
         if np.any(values == c)
     ]
-    ax.legend(handles=handles, loc="lower right", ncol=3, fontsize=7, title="Risk Category", title_fontsize=8)
+    if handles:
+        ax.legend(
+            handles=handles,
+            loc="lower right",
+            ncol=3,
+            fontsize=7,
+            title="Risk Category",
+            title_fontsize=8,
+        )
 
 
 def draw_hazard(ax, field: xr.DataArray, thresholds: list[float]):
@@ -154,10 +167,19 @@ def main() -> None:
     ds = xr.open_dataset(args.netcdf)
 
     fig = plt.figure(figsize=(18, 12), dpi=160)
-    gs = fig.add_gridspec(2, 2, left=0.04, right=0.985, bottom=0.075, top=0.84, wspace=0.05, hspace=0.08)
+    gs = fig.add_gridspec(
+        2,
+        2,
+        left=0.04,
+        right=0.985,
+        bottom=0.075,
+        top=0.84,
+        wspace=0.05,
+        hspace=0.08,
+    )
     projection = ccrs.PlateCarree()
     products = [
-        ("CATEGORICAL CONVECTIVE OUTLOOK", "severe", None),
+        ("CATEGORICAL CONVECTIVE OUTLOOK", "categorical", None),
         ("TORNADO PROBABILITY", "tornado", [0.02, 0.05, 0.10, 0.15, 0.30, 0.45, 0.60]),
         ("HAIL PROBABILITY", "hail", [0.02, 0.05, 0.15, 0.30, 0.45, 0.60]),
         ("WIND PROBABILITY", "wind", [0.02, 0.05, 0.15, 0.30, 0.45, 0.60]),
@@ -167,13 +189,24 @@ def main() -> None:
         ax = fig.add_subplot(gs[i // 2, i % 2], projection=projection)
         setup_axis(ax)
         ax.set_title(title, fontsize=11.5, fontweight="bold", pad=6)
-        if thresholds is None:
-            draw_category(ax, ds[name], cfg)
+        if name == "categorical":
+            draw_category(ax, ds["severe"], ds["thunderstorm"], cfg)
         else:
             draw_hazard(ax, ds[name], thresholds)
 
-    fig.suptitle("BRAZIL SEVERE WEATHER OUTLOOK — GFS PROXY V1", fontsize=22, fontweight="bold", y=0.96)
-    fig.text(0.5, 0.92, f"GFS 0.25° • CYCLE {args.cycle} • VALID {args.valid}", ha="center", fontsize=11)
+    fig.suptitle(
+        "BRAZIL SEVERE WEATHER OUTLOOK — GFS PROXY V1",
+        fontsize=22,
+        fontweight="bold",
+        y=0.96,
+    )
+    fig.text(
+        0.5,
+        0.92,
+        f"GFS 0.25° • CYCLE {args.cycle} • VALID {args.valid}",
+        ha="center",
+        fontsize=11,
+    )
     fig.text(
         0.5,
         0.888,
