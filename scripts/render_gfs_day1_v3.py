@@ -78,6 +78,29 @@ def setup_axis(ax, *, left_labels: bool, bottom_labels: bool):
     gl.ylabel_style = {"size": 7}
 
 
+def add_panel_title(ax, title: str) -> None:
+    """Draw a title as a normal axes artist instead of Cartopy's title slot.
+
+    Cartopy/GeoAxes title artists were disappearing in downstream PNG renders.
+    Keeping the label in axes coordinates with clip disabled makes every panel
+    unambiguous in the final artifact and mobile preview.
+    """
+    ax.text(
+        0.5,
+        1.025,
+        title,
+        transform=ax.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=11.2,
+        fontweight="bold",
+        color="#111111",
+        clip_on=False,
+        zorder=30,
+        bbox=dict(facecolor="white", edgecolor="none", alpha=0.94, pad=1.8),
+    )
+
+
 def draw_category(ax, severe: xr.DataArray, thunderstorm: xr.DataArray, cfg):
     cat = categorical_outlook(severe, thunderstorm, cfg.risk_thresholds)
     lon2d, lat2d = lon_lat(cat)
@@ -153,7 +176,7 @@ def _summary(data: dict) -> str:
 
 def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict) -> None:
     fig = plt.figure(figsize=(14, 14), dpi=155, facecolor="white")
-    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.815, wspace=0.10, hspace=0.12)
+    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.815, wspace=0.10, hspace=0.14)
     projection = ccrs.PlateCarree()
     products = [
         ("CATEGORICAL CONVECTIVE OUTLOOK", "categorical", None),
@@ -165,7 +188,7 @@ def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict
         row, col = i // 2, i % 2
         ax = fig.add_subplot(gs[row, col], projection=projection)
         setup_axis(ax, left_labels=(col == 0), bottom_labels=(row == 1))
-        ax.set_title(title, fontsize=11.2, fontweight="bold", pad=6)
+        add_panel_title(ax, title)
         if name == "categorical":
             draw_category(ax, ds["severe"], ds["thunderstorm"], cfg)
         else:
@@ -195,7 +218,7 @@ def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict
 
 def render_thermodynamics(ds: xr.Dataset, output_path: str, args: argparse.Namespace) -> None:
     fig = plt.figure(figsize=(14, 14), dpi=155, facecolor="white")
-    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.84, wspace=0.10, hspace=0.12)
+    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.84, wspace=0.10, hspace=0.14)
     projection = ccrs.PlateCarree()
     products = [
         ("MAX MIXED-LAYER CAPE (J/kg)", "mlcape_jkg", [250, 500, 1000, 1500, 2000, 3000, 4000]),
@@ -207,7 +230,7 @@ def render_thermodynamics(ds: xr.Dataset, output_path: str, args: argparse.Names
         row, col = i // 2, i % 2
         ax = fig.add_subplot(gs[row, col], projection=projection)
         setup_axis(ax, left_labels=(col == 0), bottom_labels=(row == 1))
-        ax.set_title(title, fontsize=11.2, fontweight="bold", pad=6)
+        add_panel_title(ax, title)
         field = ds[name]
         lon2d, lat2d = lon_lat(field)
         values = np.asarray(field)
