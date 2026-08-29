@@ -14,25 +14,18 @@ import cartopy.feature as cfeature
 
 from app.config import get_config
 from app.outlook.categories import categorical_outlook
+from app.outlook.land_mask import mask_dataarray_to_land
+from app.outlook.presentation import coherent_mask
 
 
 CAT_COLORS = {
-    1: "#cdeec8",
-    2: "#58b957",
-    3: "#f5e84a",
-    4: "#f3a43a",
-    5: "#e85b55",
-    6: "#d94fd5",
+    1: "#cdeec8", 2: "#58b957", 3: "#f5e84a",
+    4: "#f3a43a", 5: "#e85b55", 6: "#d94fd5",
 }
 CAT_NAMES = {1: "TSTM", 2: "MRGL", 3: "SLGT", 4: "ENH", 5: "MDT", 6: "HIGH"}
 HAZARD_COLORS = {
-    0.02: "#58b957",
-    0.05: "#9f6b4a",
-    0.10: "#f0cf32",
-    0.15: "#f0a333",
-    0.30: "#e65345",
-    0.45: "#8853d1",
-    0.60: "#111111",
+    0.02: "#58b957", 0.05: "#9f6b4a", 0.10: "#f0cf32",
+    0.15: "#f0a333", 0.30: "#e65345", 0.45: "#8853d1", 0.60: "#111111",
 }
 
 
@@ -61,10 +54,8 @@ def setup_axis(ax, *, left_labels: bool, bottom_labels: bool):
     ax.add_feature(cfeature.BORDERS.with_scale("50m"), linewidth=0.65, edgecolor="#666666", zorder=5)
     try:
         states = cfeature.NaturalEarthFeature(
-            category="cultural",
-            name="admin_1_states_provinces_lines",
-            scale="50m",
-            facecolor="none",
+            category="cultural", name="admin_1_states_provinces_lines",
+            scale="50m", facecolor="none",
         )
         ax.add_feature(states, linewidth=0.40, edgecolor="#808080", zorder=5)
     except Exception:
@@ -78,70 +69,67 @@ def setup_axis(ax, *, left_labels: bool, bottom_labels: bool):
     gl.ylabel_style = {"size": 7}
 
 
-def add_panel_title(ax, title: str) -> None:
-    """Draw a title as a normal axes artist instead of Cartopy's title slot.
-
-    Cartopy/GeoAxes title artists were disappearing in downstream PNG renders.
-    Keeping the label in axes coordinates with clip disabled makes every panel
-    unambiguous in the final artifact and mobile preview.
-    """
-    ax.text(
-        0.5,
-        1.025,
-        title,
-        transform=ax.transAxes,
-        ha="center",
-        va="bottom",
-        fontsize=11.2,
-        fontweight="bold",
-        color="#111111",
-        clip_on=False,
-        zorder=30,
-        bbox=dict(facecolor="white", edgecolor="none", alpha=0.94, pad=1.8),
+def _presentation_settings(cfg) -> tuple[int, int]:
+    pcfg = cfg.risk_thresholds.get("polygonization", {})
+    return (
+        int(pcfg.get("presentation_closing_iterations", 1)),
+        int(pcfg.get("presentation_min_component_cells", 3)),
     )
 
 
 def draw_category(ax, severe: xr.DataArray, thunderstorm: xr.DataArray, cfg):
-    cat = categorical_outlook(severe, thunderstorm, cfg.risk_thresholds)
+    cat = categorical_outlook(severe, thunderstorm, cfg.risk_thresholds).astype(float)
+    cat = mask_dataarray_to_land(cat)
     lon2d, lat2d = lon_lat(cat)
-    values = np.asarray(cat)
+    values = np.asarray(cat, dtype=float)
+    closing, min_cells = _presentation_settings(cfg)
+    reached = []
+
     for code in range(1, 7):
-        mask = np.where(values >= code, 1.0, np.nan)
-        if np.isfinite(mask).any():
-            ax.contourf(
-                lon2d, lat2d, mask,
-                levels=[0.5, 1.5], colors=[CAT_COLORS[code]], alpha=0.72,
-                transform=ccrs.PlateCarree(), zorder=1 + code * 0.05,
-            )
-            ax.contour(
-                lon2d, lat2d, values,
-                levels=[code - 0.5], colors=[CAT_COLORS[code]], linewidths=1.25,
-                transform=ccrs.PlateCarree(), zorder=4,
-            )
-    handles = [
-        Patch(facecolor=CAT_COLORS[c], edgecolor="#555555", label=CAT_NAMES[c])
-        for c in range(1, 7) if np.any(values == c)
-    ]
+        raw_mask = np.isfinite(values) & (values >= code)
+        mask = coherent_mask(raw_mask, closing_iterations=closing, min_component_cells=min_cells)
+        if not mask.any():
+            continue
+        reached.append(code)
+        plotted = np.where(mask, 1.0, np.nan)
+        ax.contourf(
+            lon2d, lat2d, plotted, levels=[0.5, 1.5], colors=[CAT_COLORS[code]],
+            alpha=0.72, transform=ccrs.PlateCarree(), zorder=1 + code * 0.05,
+        )
+        ax.contour(
+            lon2d, lat2d, mask.astype(float), levels=[0.5], colors=[CAT_COLORS[code]],
+            linewidths=1.25, transform=ccrs.PlateCarree(), zorder=4,
+        )
+
+    handles = [Patch(facecolor=CAT_COLORS[c], edgecolor="#555555", label=CAT_NAMES[c]) for c in reached]
     if handles:
         ax.legend(handles=handles, loc="lower right", ncol=3, fontsize=7,
                   title="Risk Category", title_fontsize=8, framealpha=0.95)
 
 
-def draw_hazard(ax, field: xr.DataArray, thresholds: list[float]):
-    lon2d, lat2d = lon_lat(field)
-    values = np.asarray(field)
-    reached = [t for t in thresholds if np.isfinite(values).any() and np.nanmax(values) >= t]
-    for idx, thr in enumerate(reached):
+def draw_hazard(ax, field: xr.DataArray, thresholds: list[float], cfg):
+    land = mask_dataarray_to_land(field)
+    lon2d, lat2d = lon_lat(land)
+    values = np.asarray(land, dtype=float)
+    closing, min_cells = _presentation_settings(cfg)
+    reached = []
+
+    for idx, thr in enumerate(thresholds):
+        raw_mask = np.isfinite(values) & (values >= thr)
+        mask = coherent_mask(raw_mask, closing_iterations=closing, min_component_cells=min_cells)
+        if not mask.any():
+            continue
+        reached.append(thr)
+        plotted = np.where(mask, 1.0, np.nan)
         ax.contourf(
-            lon2d, lat2d, values,
-            levels=[thr, 1.0], colors=[HAZARD_COLORS[thr]], alpha=0.66,
-            transform=ccrs.PlateCarree(), zorder=1 + idx * 0.05,
+            lon2d, lat2d, plotted, levels=[0.5, 1.5], colors=[HAZARD_COLORS[thr]],
+            alpha=0.66, transform=ccrs.PlateCarree(), zorder=1 + idx * 0.05,
         )
         ax.contour(
-            lon2d, lat2d, values,
-            levels=[thr], colors=[HAZARD_COLORS[thr]], linewidths=1.2,
-            transform=ccrs.PlateCarree(), zorder=4,
+            lon2d, lat2d, mask.astype(float), levels=[0.5], colors=[HAZARD_COLORS[thr]],
+            linewidths=1.2, transform=ccrs.PlateCarree(), zorder=4,
         )
+
     handles = [Patch(facecolor=HAZARD_COLORS[t], edgecolor="#555555", label=f"{int(t * 100)}%") for t in reached]
     if handles:
         ax.legend(handles=handles, loc="lower right", ncol=2, fontsize=7,
@@ -162,10 +150,8 @@ def _manifest(path: str | None) -> dict:
 
 def _summary(data: dict) -> str:
     maxima = data.get("maxima", {})
-    mlcape = maxima.get("mlcape_jkg")
-    mucape = maxima.get("mucape_jkg")
-    lowcape = maxima.get("mlcape_0_3km_jkg")
-    eff = maxima.get("effective_inflow_depth_m")
+    mlcape, mucape = maxima.get("mlcape_jkg"), maxima.get("mucape_jkg")
+    lowcape, eff = maxima.get("mlcape_0_3km_jkg"), maxima.get("effective_inflow_depth_m")
     if any(value is None for value in (mlcape, mucape, lowcape, eff)):
         return ""
     return (
@@ -174,9 +160,15 @@ def _summary(data: dict) -> str:
     )
 
 
+def _panel_label(fig, ax, title: str) -> None:
+    box = ax.get_position()
+    fig.text((box.x0 + box.x1) / 2.0, box.y1 + 0.010, title,
+             ha="center", va="bottom", fontsize=11.4, fontweight="bold", color="#111111")
+
+
 def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict) -> None:
     fig = plt.figure(figsize=(14, 14), dpi=155, facecolor="white")
-    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.815, wspace=0.10, hspace=0.14)
+    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.815, wspace=0.10, hspace=0.12)
     projection = ccrs.PlateCarree()
     products = [
         ("CATEGORICAL CONVECTIVE OUTLOOK", "categorical", None),
@@ -188,18 +180,18 @@ def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict
         row, col = i // 2, i % 2
         ax = fig.add_subplot(gs[row, col], projection=projection)
         setup_axis(ax, left_labels=(col == 0), bottom_labels=(row == 1))
-        add_panel_title(ax, title)
         if name == "categorical":
             draw_category(ax, ds["severe"], ds["thunderstorm"], cfg)
         else:
-            draw_hazard(ax, ds[name], thresholds)
+            draw_hazard(ax, ds[name], thresholds, cfg)
+        _panel_label(fig, ax, title)
 
-    fig.suptitle("BRAZIL SEVERE WEATHER OUTLOOK — GFS DIAGNOSTICS V3", fontsize=21.5, fontweight="bold", y=0.955)
+    fig.suptitle("BRAZIL SEVERE WEATHER OUTLOOK — GFS DIAGNOSTICS V3.2", fontsize=21.5, fontweight="bold", y=0.955)
     fig.text(0.5, 0.920, f"GFS 0.25° • CYCLE {args.cycle} • VALID {args.valid}", ha="center", fontsize=10.8)
     fig.text(
         0.5, 0.887,
-        "LIVE GFS • RECONSTRUCTED SB/ML/MU PARCELS • HEIGHT-RESOLVED KINEMATICS • NOT YET CALIBRATED",
-        ha="center", fontsize=9.0, fontweight="bold",
+        "LIVE GFS • LAND-ONLY RISK • COHERENT POLYGONS • RECONSTRUCTED SB/ML/MU PARCELS • NOT YET CALIBRATED",
+        ha="center", fontsize=8.8, fontweight="bold",
         bbox=dict(boxstyle="round,pad=0.34", facecolor="#fff0b8", edgecolor="#987a14"),
     )
     summary = _summary(manifest)
@@ -207,7 +199,7 @@ def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict
         fig.text(0.5, 0.852, summary, ha="center", fontsize=8.5, color="#444444")
     fig.text(
         0.055, 0.040,
-        "Source: NOAA/NCEP GFS via NOMADS. V3 reconstructs surface-based, 100-hPa mixed-layer and most-unstable parcel thermodynamics from pressure-level T/q/height profiles; native GFS CAPE/CIN are not used by the V3 hazard equations. Probabilities remain engineering guidance pending historical calibration.",
+        "Source: NOAA/NCEP GFS via NOMADS. Outlook presentation is clipped to physical land and small adjacent risk fragments are merged/rounded for meteorological readability; raw probability grids remain unchanged. V3 reconstructs SB/ML/MU parcel thermodynamics from pressure-level profiles.",
         fontsize=7.6, color="#50545a", wrap=True,
     )
     output = Path(args.output)
@@ -218,7 +210,7 @@ def render_outlook(ds: xr.Dataset, args: argparse.Namespace, cfg, manifest: dict
 
 def render_thermodynamics(ds: xr.Dataset, output_path: str, args: argparse.Namespace) -> None:
     fig = plt.figure(figsize=(14, 14), dpi=155, facecolor="white")
-    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.84, wspace=0.10, hspace=0.14)
+    gs = fig.add_gridspec(2, 2, left=0.055, right=0.955, bottom=0.095, top=0.84, wspace=0.10, hspace=0.12)
     projection = ccrs.PlateCarree()
     products = [
         ("MAX MIXED-LAYER CAPE (J/kg)", "mlcape_jkg", [250, 500, 1000, 1500, 2000, 3000, 4000]),
@@ -230,7 +222,6 @@ def render_thermodynamics(ds: xr.Dataset, output_path: str, args: argparse.Names
         row, col = i // 2, i % 2
         ax = fig.add_subplot(gs[row, col], projection=projection)
         setup_axis(ax, left_labels=(col == 0), bottom_labels=(row == 1))
-        add_panel_title(ax, title)
         field = ds[name]
         lon2d, lat2d = lon_lat(field)
         values = np.asarray(field)
@@ -238,13 +229,11 @@ def render_thermodynamics(ds: xr.Dataset, output_path: str, args: argparse.Names
         if finite.any():
             vmax = max(float(np.nanmax(values)), levels[1])
             usable = [level for level in levels if level < vmax]
-            if len(usable) < 2:
-                usable = [0.0, vmax]
-            else:
-                usable = [0.0] + usable + [max(vmax, usable[-1] + 1.0)]
+            usable = [0.0, vmax] if len(usable) < 2 else [0.0] + usable + [max(vmax, usable[-1] + 1.0)]
             cf = ax.contourf(lon2d, lat2d, values, levels=usable, transform=ccrs.PlateCarree(), extend="max")
             cbar = fig.colorbar(cf, ax=ax, orientation="horizontal", pad=0.045, shrink=0.88)
             cbar.ax.tick_params(labelsize=7)
+        _panel_label(fig, ax, title)
 
     fig.suptitle("BRAZIL GFS THERMODYNAMICS — DIAGNOSTICS V3", fontsize=21.5, fontweight="bold", y=0.955)
     fig.text(0.5, 0.920, f"GFS 0.25° • CYCLE {args.cycle} • VALID {args.valid}", ha="center", fontsize=10.8)
@@ -256,7 +245,7 @@ def render_thermodynamics(ds: xr.Dataset, output_path: str, args: argparse.Names
     )
     fig.text(
         0.055, 0.040,
-        "Thermodynamics are calculated from pressure-level temperature, specific humidity, geopotential height, 2-m T/Td and surface pressure. Effective inflow uses CAPE ≥100 J/kg and CIN ≥−250 J/kg sampled every 50 hPa through the lowest 300 hPa.",
+        "Thermodynamics are calculated from pressure-level temperature, moisture and geopotential height plus 2-m T/Td and surface pressure. Effective inflow uses CAPE ≥100 J/kg and CIN ≥−250 J/kg sampled every 50 hPa through the lowest 300 hPa.",
         fontsize=7.6, color="#50545a", wrap=True,
     )
     out = Path(output_path)
