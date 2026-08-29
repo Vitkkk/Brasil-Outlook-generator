@@ -8,6 +8,7 @@ from shapely.geometry import box, mapping
 from shapely.ops import unary_union
 
 from .categories import CATEGORY_CODE
+from .land_mask import clip_geometry_to_land
 
 
 def _edges(values: np.ndarray) -> np.ndarray:
@@ -17,6 +18,22 @@ def _edges(values: np.ndarray) -> np.ndarray:
     )
 
 
+def _coherent_geometry(cells, *, bridge_gap_deg, simplify_tolerance_deg, min_area_deg2, land_only):
+    geom = unary_union(cells)
+    if bridge_gap_deg > 0:
+        radius = bridge_gap_deg / 2.0
+        geom = geom.buffer(radius, join_style=1).buffer(-radius, join_style=1)
+    if land_only:
+        geom = clip_geometry_to_land(geom)
+    if simplify_tolerance_deg > 0 and not geom.is_empty:
+        geom = geom.simplify(simplify_tolerance_deg, preserve_topology=True)
+    if geom.is_empty:
+        return None
+    parts = [geom] if geom.geom_type == "Polygon" else list(getattr(geom, "geoms", []))
+    parts = [p for p in parts if p.geom_type == "Polygon" and p.area >= min_area_deg2]
+    return unary_union(parts) if parts else None
+
+
 def categorical_field_to_geojson(
     field: xr.DataArray,
     *,
@@ -24,6 +41,8 @@ def categorical_field_to_geojson(
     valid_end: datetime,
     simplify_tolerance_deg: float = 0.05,
     min_area_deg2: float = 0.04,
+    bridge_gap_deg: float = 0.0,
+    land_only: bool = False,
 ) -> dict:
     da = field.transpose("latitude", "longitude").sortby("latitude").sortby("longitude")
     values = np.asarray(da.values, dtype=int)
@@ -41,21 +60,26 @@ def categorical_field_to_geojson(
         ]
         if not cells:
             continue
-        merged = unary_union(cells).simplify(simplify_tolerance_deg, preserve_topology=True)
-        parts = [merged] if merged.geom_type == "Polygon" else list(getattr(merged, "geoms", []))
-        parts = [part for part in parts if part.area >= min_area_deg2]
-        if not parts:
+        merged = _coherent_geometry(
+            cells,
+            bridge_gap_deg=bridge_gap_deg,
+            simplify_tolerance_deg=simplify_tolerance_deg,
+            min_area_deg2=min_area_deg2,
+            land_only=land_only,
+        )
+        if merged is None:
             continue
         features.append(
             {
                 "type": "Feature",
-                "geometry": mapping(unary_union(parts)),
+                "geometry": mapping(merged),
                 "properties": {
                     "product": "categorical",
                     "category": category,
                     "category_code": code,
                     "valid_start": _iso(valid_start),
                     "valid_end": _iso(valid_end),
+                    "land_only": land_only,
                 },
             }
         )
@@ -67,6 +91,7 @@ def categorical_field_to_geojson(
             "product": "categorical",
             "valid_start": _iso(valid_start),
             "valid_end": _iso(valid_end),
+            "land_only": land_only,
         },
     }
 
