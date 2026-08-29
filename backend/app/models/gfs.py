@@ -18,10 +18,10 @@ from ..ingestion.nomads import (
 from .base_adapter import ModelAdapter
 
 
-# Focused manifest for the first live convective pipeline. We intentionally keep
-# only one CAPE/CIN layer (surface) in this smoke-test adapter so cfgrib does not
-# have to reconcile several fields with identical GRIB short names. Effective/
-# mixed-layer parcels will be recalculated later from reconstructed profiles.
+# Focused manifest for the live convective pipeline. Native CAPE/CIN are retained
+# as useful model guidance, while V2 diagnostics reconstruct wind/temperature
+# structure from pressure-level profiles instead of treating a single index as
+# the forecast decision.
 GFS_VARIABLES = (
     "CAPE",
     "CIN",
@@ -142,7 +142,8 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
         return _drop_scalar_vertical_coords(ds)
 
     # These fields have unique short names but are spread across several GRIB
-    # level types. Rename before merging so scalar level coordinates can be removed.
+    # level types. Surface HGT is exposed as terrain_height so diagnostics can
+    # interpolate pressure-level profiles to AGL heights.
     ds = _rename_existing(
         ds,
         {
@@ -154,6 +155,8 @@ def _prepare_cfgrib_group(ds: xr.Dataset) -> xr.Dataset:
             "gust": "surface_gust",
             "ustm": "storm_motion_u",
             "vstm": "storm_motion_v",
+            "orog": "terrain_height",
+            "gh": "terrain_height",
             "sp": "surface_air_pressure",
             "prmsl": "air_pressure_at_mean_sea_level",
         },
