@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import xarray as xr
 
 from app.config import get_config
 from app.hazards.gfs_diagnostics_v3 import (
@@ -19,6 +20,7 @@ from app.outlook.geojson import probability_field_to_geojson
 
 
 DEFAULT_HOURS = tuple(range(0, 25, 3))
+SOUNDING_PRODUCTS = ("severe", "tornado", "hail", "wind")
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +45,55 @@ def _safe_min(field) -> float:
     return float(np.nanmin(values)) if np.isfinite(values).any() else float("nan")
 
 
+def _point_field(field: xr.DataArray) -> xr.DataArray:
+    work = field
+    if "valid_time" in work.dims and work.sizes["valid_time"] == 1:
+        work = work.isel(valid_time=0, drop=True)
+    return work
+
+
+def _max_location(field: xr.DataArray) -> tuple[float, float, float] | None:
+    work = _point_field(field).transpose("latitude", "longitude")
+    values = np.asarray(work, dtype=float)
+    if not np.isfinite(values).any():
+        return None
+    iy, ix = np.unravel_index(np.nanargmax(values), values.shape)
+    return (
+        float(values[iy, ix]),
+        float(work.latitude.values[iy]),
+        float(work.longitude.values[ix]),
+    )
+
+
+def _scalar_at(point: xr.Dataset, name: str) -> float | None:
+    if name not in point:
+        return None
+    values = np.asarray(point[name], dtype=float)
+    if not np.isfinite(values).any():
+        return None
+    return float(values.reshape(-1)[0])
+
+
+def _save_peak_soundings(
+    best: dict[str, dict],
+    output_dir: Path,
+) -> list[dict]:
+    sounding_dir = output_dir / "soundings"
+    sounding_dir.mkdir(parents=True, exist_ok=True)
+    summary = []
+    for product, entry in best.items():
+        point = entry.pop("point_dataset")
+        point_path = sounding_dir / f"{product}_peak.nc"
+        point.to_netcdf(point_path)
+        metadata = dict(entry)
+        metadata["product"] = product
+        metadata["profile_file"] = point_path.name
+        metadata_path = sounding_dir / f"{product}_peak.json"
+        metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        summary.append(metadata)
+    return summary
+
+
 def main() -> None:
     args = parse_args()
     adapter = GFSAdapter()
@@ -58,21 +109,59 @@ def main() -> None:
     output_dir = Path(args.output_dir) / cycle.strftime("%Y%m%d%H")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    sampled = []
+    sampled: list[xr.Dataset] = []
+    best_soundings: dict[str, dict] = {}
+
     for hour in hours:
         [path] = adapter.download(cycle, [hour], data_dir)
         native = adapter.open_native([path])
         standard = adapter.standardize(native)
-        sampled.append(gfs_diagnostics_v3_probabilities(standard))
+        diagnostics = gfs_diagnostics_v3_probabilities(standard)
+        sampled.append(diagnostics)
+
+        for product in SOUNDING_PRODUCTS:
+            location = _max_location(diagnostics[product])
+            if location is None:
+                continue
+            score, lat, lon = location
+            previous = best_soundings.get(product)
+            if previous is not None and score <= previous["probability"]:
+                continue
+
+            point_standard = standard.sel(latitude=lat, longitude=lon, method="nearest")
+            point_diag = diagnostics.sel(latitude=lat, longitude=lon, method="nearest")
+            point_dataset = xr.merge([point_standard, point_diag], compat="override", join="outer")
+            params = {
+                name: _scalar_at(point_diag, name)
+                for name in (
+                    "mlcape_jkg", "mucape_jkg", "mlcape_0_3km_jkg", "mlcin_jkg",
+                    "ml_lcl_agl_m", "effective_inflow_depth_m", "shear_0_1km_ms",
+                    "shear_0_6km_ms", "srh_0_1km_proxy_m2s2", "srh_0_3km_proxy_m2s2",
+                    "lapse_700_500_c_per_km", "freezing_level_agl_m",
+                    "supercell", "qlcs", "tornado", "hail", "wind", "severe",
+                )
+            }
+            best_soundings[product] = {
+                "probability": score,
+                "forecast_hour": int(hour),
+                "valid_time": (cycle + timedelta(hours=int(hour))).isoformat(),
+                "latitude": lat,
+                "longitude": lon,
+                "parameters": params,
+                "point_dataset": point_dataset,
+            }
 
     fields = aggregate_day1_v3(sampled)
     fields.to_netcdf(output_dir / "gfs_day1_diagnostics_v3.nc")
+    sounding_summary = _save_peak_soundings(best_soundings, output_dir)
 
     start = cycle
     end = cycle + timedelta(hours=24)
-    simplify_cfg = cfg.risk_thresholds["polygonization"]
-    simplify = float(simplify_cfg["simplify_tolerance_deg"])
-    min_area = float(simplify_cfg["min_area_deg2"])
+    polygon_cfg = cfg.risk_thresholds["polygonization"]
+    simplify = float(polygon_cfg["simplify_tolerance_deg"])
+    min_area = float(polygon_cfg["min_area_deg2"])
+    bridge_gap = float(polygon_cfg.get("bridge_gap_deg", 0.0))
+    land_only = bool(polygon_cfg.get("land_only", False))
 
     hazard_thresholds = {
         "thunderstorm": [0.10, 0.40, 0.70],
@@ -96,6 +185,8 @@ def main() -> None:
             distance_km=cfg.domain.probability_radius_km,
             simplify_tolerance_deg=simplify,
             min_area_deg2=min_area,
+            bridge_gap_deg=bridge_gap,
+            land_only=land_only,
         )
         product["properties"].update(
             {
@@ -103,7 +194,7 @@ def main() -> None:
                 "cycle": cycle.isoformat(),
                 "sampled_forecast_hours": hours,
                 "calibrated": False,
-                "method": "GFS Diagnostics V3",
+                "method": "GFS Diagnostics V3.2 presentation",
                 "native_cape_cin_used_for_hazards": False,
             }
         )
@@ -117,6 +208,8 @@ def main() -> None:
         valid_end=end,
         simplify_tolerance_deg=simplify,
         min_area_deg2=min_area,
+        bridge_gap_deg=bridge_gap,
+        land_only=land_only,
     )
     categorical["properties"].update(
         {
@@ -124,7 +217,7 @@ def main() -> None:
             "cycle": cycle.isoformat(),
             "sampled_forecast_hours": hours,
             "calibrated": False,
-            "method": "GFS Diagnostics V3",
+            "method": "GFS Diagnostics V3.2 presentation",
             "native_cape_cin_used_for_hazards": False,
         }
     )
@@ -156,9 +249,17 @@ def main() -> None:
         "valid_end": end.isoformat(),
         "sampled_forecast_hours": hours,
         "data_source": "NOAA/NCEP NOMADS",
-        "method": "GFS Diagnostics V3",
+        "method": "GFS Diagnostics V3.2",
         "calibrated": False,
         "native_cape_cin_used_for_hazards": False,
+        "presentation": {
+            "land_only": land_only,
+            "bridge_gap_deg": bridge_gap,
+            "min_area_deg2": min_area,
+            "simplify_tolerance_deg": simplify,
+            "raw_probability_grid_unchanged": True,
+        },
+        "soundings": sounding_summary,
         "thermodynamic_reconstruction": {
             "vertical_levels": "1000–200 hPa; mostly 50-hPa spacing with extra near-surface levels",
             "parcels": ["surface-based", "100-hPa mixed-layer", "most-unstable in lowest 300 hPa"],
@@ -166,19 +267,9 @@ def main() -> None:
             "buoyancy": "virtual-temperature CAPE/CIN integrated on model geopotential-height profile",
             "effective_inflow": "CAPE >=100 J/kg and CIN >=-250 J/kg, sampled every 50 hPa through lowest 300 hPa",
         },
-        "diagnostic_changes": [
-            "reconstructed SBCAPE/SBCIN",
-            "reconstructed MLCAPE/MLCIN",
-            "reconstructed MUCAPE/MUCIN",
-            "0–3 km parcel CAPE",
-            "parcel LCL/LFC/EL",
-            "sampled effective inflow layer",
-            "native GFS CAPE/CIN removed from V3 hazard equations",
-            "V2 height-resolved shear/SRH/streamwise diagnostics retained",
-        ],
         "maxima": maxima,
         "warning": (
-            "Diagnostics V3 is live-model engineering guidance. Thermodynamics are reconstructed from "
+            "Diagnostics V3.2 is live-model engineering guidance. Thermodynamics are reconstructed from "
             "the GFS sounding, but probabilities are not yet historically calibrated."
         ),
     }
