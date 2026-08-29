@@ -1,0 +1,56 @@
+name: GFS Hindcast 2025-11-07
+
+on:
+  push:
+    paths:
+      - '.github/workflows/gfs-hindcast-20251107.yml'
+  workflow_dispatch:
+
+jobs:
+  hindcast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[grib,dev]" matplotlib cartopy herbie-data
+
+      - name: Unit tests
+        run: pytest -q
+
+      - name: Generate strict GFS historical hindcast
+        env:
+          PYTHONPATH: backend
+        run: |
+          python scripts/generate_gfs_hindcast_v3.py \
+            --cycle 2025-11-07T00:00Z \
+            --hours 0,6,12,18,24
+
+      - name: Render outlook and peak soundings
+        env:
+          PYTHONPATH: backend
+        run: |
+          OUTDIR=output/gfs-hindcast-v3/2025110700
+          python scripts/render_gfs_hindcast_v3.py \
+            "$OUTDIR/gfs_day1_hindcast_v3.nc" \
+            "$OUTDIR/brazil_gfs_hindcast_20251107_00z.png" \
+            --manifest "$OUTDIR/manifest.json"
+          python scripts/render_gfs_soundings_v3.py \
+            "$OUTDIR/soundings" \
+            "$OUTDIR/soundings/rendered"
+
+      - name: Upload hindcast artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gfs-hindcast-20251107-00z
+          path: output/gfs-hindcast-v3/2025110700/**
+          retention-days: 14
+          if-no-files-found: error
