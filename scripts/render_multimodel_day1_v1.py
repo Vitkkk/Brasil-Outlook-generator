@@ -42,21 +42,15 @@ def xy(da):
 
 
 def clean_mask(mask, code_or_threshold=None):
-    # Keep stronger compact maxima while aggressively cleaning weak speckle.
     strong = False
     if code_or_threshold is not None:
         strong = code_or_threshold >= 4 if isinstance(code_or_threshold, int) else code_or_threshold >= 0.30
-    return coherent_mask(
-        mask,
-        closing_iterations=2 if strong else 1,
-        min_component_cells=1 if strong else 3,
-    )
+    return coherent_mask(mask, closing_iterations=2 if strong else 1, min_component_cells=1 if strong else 3)
 
 
 def category(ax, ds, cfg):
     cat=mask_dataarray_to_land(categorical_outlook(ds.severe,ds.thunderstorm,cfg.risk_thresholds).astype(float))
-    lon,lat=xy(cat); val=np.asarray(cat)
-    reached=[]
+    lon,lat=xy(cat); val=np.asarray(cat); reached=[]
     for code in range(1,7):
         m=clean_mask(np.isfinite(val)&(val>=code), code)
         if not m.any(): continue
@@ -82,21 +76,32 @@ def hazard(ax, da, thresholds):
 
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("netcdf"); p.add_argument("output"); p.add_argument("--manifest",required=True)
-    a=p.parse_args(); ds=xr.open_dataset(a.netcdf); cfg=get_config(); m=json.loads(Path(a.manifest).read_text())
+    p=argparse.ArgumentParser(); p.add_argument("netcdf"); p.add_argument("output"); p.add_argument("--manifest",required=True); p.add_argument("--product",default="CONSENSUS",choices=["GFS","ECMWF","CONSENSUS"])
+    a=p.parse_args(); ds=xr.open_dataset(a.netcdf); cfg=get_config(); m=json.loads(Path(a.manifest).read_text()); product=a.product
     fig=plt.figure(figsize=(14,14),dpi=155,facecolor="white"); gs=fig.add_gridspec(2,2,left=.055,right=.955,bottom=.095,top=.815,wspace=.10,hspace=.12)
     products=[("CATEGORICAL CONVECTIVE OUTLOOK",None,None),("TORNADO PROBABILITY","tornado",[.02,.05,.10,.15,.30,.45,.60]),("HAIL PROBABILITY","hail",[.02,.05,.15,.30,.45,.60]),("WIND PROBABILITY","wind",[.02,.05,.15,.30,.45,.60])]
     for i,(title,name,ths) in enumerate(products):
         r,c=divmod(i,2); ax=fig.add_subplot(gs[r,c],projection=ccrs.PlateCarree()); setup(ax,c==0,r==1)
         category(ax,ds,cfg) if name is None else hazard(ax,ds[name],ths)
         b=ax.get_position(); fig.text((b.x0+b.x1)/2,b.y1+.010,title,ha="center",va="bottom",fontsize=11.4,fontweight="bold")
-    models=" + ".join(m["models_used"])
-    fig.suptitle("BRAZIL SEVERE WEATHER OUTLOOK — MULTIMODEL CONSENSUS V2",fontsize=20.5,fontweight="bold",y=.955)
-    fig.text(.5,.920,f"{models} • CYCLE {m['cycle']} • VALID {m['valid_start']} – {m['valid_end']}",ha="center",fontsize=10.2)
-    fig.text(.5,.887,"DETERMINISTIC MULTIMODEL CONSENSUS • LAND-ONLY • 75-km SPATIAL AGREEMENT • ORGANIZATION PRESERVATION • NOT YET CALIBRATED",ha="center",fontsize=8.5,fontweight="bold",bbox=dict(boxstyle="round,pad=.34",facecolor="#fff0b8",edgecolor="#987a14"))
-    mx=m["maxima"]["CONSENSUS"]
-    fig.text(.5,.852,f"CONSENSUS MAXIMA: severe {mx['severe']*100:.1f}% • tornado {mx['tornado']*100:.1f}% • hail {mx['hail']*100:.1f}% • wind {mx['wind']*100:.1f}%",ha="center",fontsize=8.5,color="#444")
-    fig.text(.055,.040,"V2 corrects the conservative point-to-point bias found in the 29 Aug 2026 case. Nearby model maxima within 75 km count as regional agreement, while supercell + initiation support can preserve the upper-end severe scenario. Forecast confidence remains separate from risk magnitude. Historical calibration and ICON/WRF are still pending.",fontsize=7.6,color="#50545a",wrap=True)
+    if product == "CONSENSUS":
+        headline="BRAZIL SEVERE WEATHER OUTLOOK — GFS + ECMWF CONSENSUS V2"
+        banner="DETERMINISTIC MULTIMODEL CONSENSUS • LAND-ONLY • 75-km SPATIAL AGREEMENT • ORGANIZATION PRESERVATION • NOT YET CALIBRATED"
+        model_line=" + ".join(m["models_used"])
+    else:
+        headline=f"BRAZIL SEVERE WEATHER OUTLOOK — {product} DIAGNOSTICS V3"
+        banner=f"{product} DETERMINISTIC • DIAGNOSTICS V3 • LAND-ONLY • COHERENT POLYGONS • NOT YET CALIBRATED"
+        model_line=product
+    fig.suptitle(headline,fontsize=20.5,fontweight="bold",y=.955)
+    fig.text(.5,.920,f"{model_line} • CYCLE {m['cycle']} • VALID {m['valid_start']} – {m['valid_end']}",ha="center",fontsize=10.2)
+    fig.text(.5,.887,banner,ha="center",fontsize=8.5,fontweight="bold",bbox=dict(boxstyle="round,pad=.34",facecolor="#fff0b8",edgecolor="#987a14"))
+    mx=m["maxima"][product]
+    fig.text(.5,.852,f"DAY-1 MAXIMA: severe {mx['severe']*100:.1f}% • tornado {mx['tornado']*100:.1f}% • hail {mx['hail']*100:.1f}% • wind {mx['wind']*100:.1f}%",ha="center",fontsize=8.5,color="#444")
+    note=("Current operational-style renderer: hazards are masked to land and coherent-mask cleanup reduces isolated speckle while preserving compact stronger maxima. "
+          "Probabilities are engineering guidance pending historical calibration.")
+    if product == "CONSENSUS":
+        note += " Consensus uses 75-km neighborhood agreement so small model displacement does not artificially suppress regional risk."
+    fig.text(.055,.040,note,fontsize=7.6,color="#50545a",wrap=True)
     out=Path(a.output); out.parent.mkdir(parents=True,exist_ok=True); fig.savefig(out,facecolor="white"); plt.close(fig); print(out)
 
 if __name__=="__main__": main()
