@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import timezone
+from datetime import timedelta
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -28,11 +28,10 @@ def _find_reflectivity(groups: list[xr.Dataset]) -> xr.DataArray:
         raise RuntimeError("No reflectivity field found in CPTEC WRF GRIB groups")
     candidates.sort(key=lambda x: x[0], reverse=True)
     da = candidates[0][1]
-    # collapse any non-horizontal dimensions conservatively using max reflectivity
     for dim in tuple(da.dims):
         if dim.lower() in {"latitude", "longitude"}:
             continue
-        if dim in da.coords and da.sizes.get(dim, 1) > 1:
+        if da.sizes.get(dim, 1) > 1:
             da = da.max(dim=dim, skipna=True)
         else:
             da = da.isel({dim: 0}, drop=True)
@@ -57,16 +56,11 @@ def main():
     work.mkdir(exist_ok=True)
     paths = adapter.download(cycle, hours, work)
 
-    try:
-        import cfgrib
-    except ImportError as exc:
-        raise RuntimeError("cfgrib required") from exc
-
+    import cfgrib
     fields = []
     for h, path in zip(hours, paths):
         groups = cfgrib.open_datasets(str(path), backend_kwargs={"indexpath": ""})
         da = _find_reflectivity(groups)
-        # normalize coordinate names
         if "latitude" not in da.coords and "lat" in da.coords:
             da = da.rename({"lat": "latitude"})
         if "longitude" not in da.coords and "lon" in da.coords:
@@ -81,25 +75,35 @@ def main():
     levels = [5,10,15,20,25,30,35,40,45,50,55,60,65,70,75]
 
     for ax, (h, da) in zip(axes, fields):
-        lon = da["longitude"].values
-        lat = da["latitude"].values
+        lon = np.asarray(da["longitude"].values, dtype=float)
+        lat = np.asarray(da["latitude"].values, dtype=float)
+        if np.nanmax(lon) > 180:
+            lon = ((lon + 180.0) % 360.0) - 180.0
+        order = np.argsort(lon)
+        lon = lon[order]
         z = np.asarray(da.values, dtype=float)
         if z.ndim != 2:
             z = np.squeeze(z)
-        # South America focus
+        if z.shape == (lat.size, order.size):
+            z = z[:, order]
         mask_lon = (lon >= -70) & (lon <= -35)
         mask_lat = (lat >= -40) & (lat <= -15)
         if z.shape == (lat.size, lon.size):
             z = z[np.ix_(mask_lat, mask_lon)]
-            lonp = lon[mask_lon]; latp = lat[mask_lat]
+            lonp = lon[mask_lon]
+            latp = lat[mask_lat]
         else:
-            lonp = lon; latp = lat
+            raise RuntimeError(f"Unexpected reflectivity geometry {z.shape} for lat/lon {lat.size}/{lon.size}")
+        if z.shape[0] < 2 or z.shape[1] < 2:
+            raise RuntimeError(f"Empty cropped reflectivity field: {z.shape}; lon range {lon.min()}..{lon.max()}")
         cf = ax.contourf(lonp, latp, z, levels=levels, extend="max")
         ax.contour(lonp, latp, z, levels=[20,35,50], linewidths=[0.5,0.8,1.1])
-        valid = cycle + __import__('datetime').timedelta(hours=h)
+        valid = cycle + timedelta(hours=h)
         ax.set_title(f"F{h:03d} • VALID {valid:%d/%m %HZ}", fontsize=12, weight="bold")
-        ax.set_xlim(-70, -35); ax.set_ylim(-40, -15)
-        ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
+        ax.set_xlim(-70, -35)
+        ax.set_ylim(-40, -15)
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
         ax.grid(alpha=0.2)
 
     for ax in axes[n:]:
