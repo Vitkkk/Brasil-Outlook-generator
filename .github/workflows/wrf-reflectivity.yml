@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libeccodes0
           python -m pip install --upgrade pip
-          pip install numpy xarray matplotlib requests cfgrib eccodes
+          pip install numpy xarray matplotlib requests cfgrib eccodes pyyaml pydantic
       - name: Render today's WRF reflectivity
         env:
           PYTHONPATH: backend
