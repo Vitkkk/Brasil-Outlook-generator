@@ -1,0 +1,35 @@
+name: WRF simulated reflectivity
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/render_wrf_simulated_reflectivity.py'
+      - '.github/workflows/wrf-reflectivity.yml'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+          python -m pip install --upgrade pip
+          pip install numpy xarray matplotlib requests cfgrib eccodes
+      - name: Render today's WRF reflectivity
+        env:
+          PYTHONPATH: backend
+        run: |
+          python scripts/render_wrf_simulated_reflectivity.py \
+            --hours 12,15,18,21,24,27 \
+            --output output/wrf_simulated_reflectivity_today.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wrf-simulated-reflectivity-today
+          path: output/wrf_simulated_reflectivity_today.png
+          retention-days: 7
