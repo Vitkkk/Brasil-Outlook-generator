@@ -10,6 +10,7 @@ on:
       - "backend/app/ensemble/multimodel_v1.py"
       - "scripts/generate_multimodel_day1_v1.py"
       - "scripts/render_multimodel_day1_v1.py"
+      - "scripts/render_model_day1_v3.py"
       - ".github/workflows/multimodel-v1.yml"
 
 permissions:
@@ -35,14 +36,25 @@ jobs:
         env:
           PYTHONPATH: backend
         run: python scripts/generate_multimodel_day1_v1.py --hours 0,6,12,18,24
-      - name: Render consensus outlook
+      - name: Render GFS, ECMWF and consensus outlooks
         env:
           PYTHONPATH: backend
         run: |
           OUTDIR=$(find output/multimodel-v1 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+
+          python scripts/render_model_day1_v3.py \
+            "$OUTDIR/gfs_day1_v3.nc" \
+            "$OUTDIR/brazil_gfs_day1_outlook.png" \
+            --manifest "$OUTDIR/manifest.json" --model "GFS"
+
+          python scripts/render_model_day1_v3.py \
+            "$OUTDIR/ecmwf_day1_v3.nc" \
+            "$OUTDIR/brazil_ecmwf_day1_outlook.png" \
+            --manifest "$OUTDIR/manifest.json" --model "ECMWF"
+
           python scripts/render_multimodel_day1_v1.py \
             "$OUTDIR/multimodel_day1_consensus_v1.nc" \
-            "$OUTDIR/brazil_multimodel_day1_outlook_v1.png" \
+            "$OUTDIR/brazil_gfs_ecmwf_consensus_day1_outlook.png" \
             --manifest "$OUTDIR/manifest.json"
       - name: Upload multimodel artifact
         uses: actions/upload-artifact@v4
