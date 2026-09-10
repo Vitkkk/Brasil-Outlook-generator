@@ -8,6 +8,7 @@ on:
       - "backend/app/models/wrf_cptec.py"
       - "scripts/generate_multimodel_day1_v2_wrf.py"
       - "scripts/render_model_day1_v3.py"
+      - "scripts/render_multimodel_day1_v1.py"
       - ".github/workflows/multimodel-wrf-v2.yml"
 
 permissions:
@@ -33,20 +34,32 @@ jobs:
         env:
           PYTHONPATH: backend
         run: python scripts/generate_multimodel_day1_v2_wrf.py --hours 0,6,12,18,24
-      - name: Render WRF-only and three-model consensus
+      - name: Render GFS, ECMWF, WRF and three-model consensus
         env:
           PYTHONPATH: backend
         run: |
           OUTDIR=$(find output/multimodel-wrf-v2 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+
+          python scripts/render_model_day1_v3.py \
+            "$OUTDIR/gfs_day1_v3.nc" \
+            "$OUTDIR/brazil_gfs_day1_outlook.png" \
+            --manifest "$OUTDIR/manifest.json" --model "GFS"
+
+          python scripts/render_model_day1_v3.py \
+            "$OUTDIR/ecmwf_day1_v3.nc" \
+            "$OUTDIR/brazil_ecmwf_day1_outlook.png" \
+            --manifest "$OUTDIR/manifest.json" --model "ECMWF"
+
           python scripts/render_model_day1_v3.py \
             "$OUTDIR/wrf_cptec_7km_day1_v3.nc" \
             "$OUTDIR/brazil_wrf_cptec_7km_day1_outlook.png" \
             --manifest "$OUTDIR/manifest.json" --model "WRF-CPTEC-7KM"
+
           python scripts/render_multimodel_day1_v1.py \
             "$OUTDIR/multimodel_day1_consensus_v2_wrf.nc" \
             "$OUTDIR/brazil_gfs_ecmwf_wrf_consensus_day1_outlook.png" \
             --manifest "$OUTDIR/manifest.json"
-      - name: Upload WRF multimodel artifact
+      - name: Upload complete multimodel Day-1 artifact
         uses: actions/upload-artifact@v4
         with:
           name: multimodel-gfs-ecmwf-wrf-v2
