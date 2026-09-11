@@ -8,19 +8,20 @@ from urllib.parse import urljoin
 HOST = "ftp.inmet.gov.br"
 ROOT = "/cosmo"
 VIME = "https://vime.inmet.gov.br/"
+API = "https://apivime.inmet.gov.br"
 
 
 def fetch(url: str) -> str:
-    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json,text/plain,*/*"})
     with urlopen(req, timeout=30) as r:
         data = r.read()
+        print("HTTP", r.status, url, "CTYPE", r.headers.get("content-type"))
     return data.decode("utf-8", "ignore")
 
 
 def probe_vime() -> None:
     print("=== VIME WEB PROBE ===")
     html = fetch(VIME)
-    print("INDEX", html[:3000])
     assets = re.findall(r'(?:src|href)=["\']([^"\']+\.(?:js|json))["\']', html)
     print("ASSETS", assets)
     for asset in assets[:20]:
@@ -31,9 +32,25 @@ def probe_vime() -> None:
             print("ASSET FAIL", url, exc)
             continue
         print("ASSET", url, "LEN", len(text))
-        hits = sorted(set(re.findall(r'https?://[^"\'\\\s]+|/[A-Za-z0-9_./-]*(?:api|cosmo|modelo|model)[A-Za-z0-9_?=&./-]*', text, re.I)))
-        for h in hits[:150]:
-            print("HIT", h[:500])
+        for needle in ["apivime", "modelos", "rodadas", "previs", "produto", "cosmo"]:
+            pos = 0
+            while True:
+                i = text.lower().find(needle, pos)
+                if i < 0:
+                    break
+                print("CTX", text[max(0, i-250): i+500].replace("\n", " "))
+                pos = i + len(needle)
+
+
+def probe_api() -> None:
+    print("=== VIME API PROBE ===")
+    for path in ["/", "/modelos", "/modelos/", "/api/modelos", "/produtos", "/rodadas"]:
+        url = API + path
+        try:
+            text = fetch(url)
+            print("BODY", path, text[:10000])
+        except Exception as exc:
+            print("API FAIL", path, repr(exc))
 
 
 def probe_ftp() -> None:
@@ -56,6 +73,7 @@ def probe_ftp() -> None:
 def main() -> None:
     probe_ftp()
     probe_vime()
+    probe_api()
 
 
 if __name__ == "__main__":
