@@ -63,3 +63,5 @@ jobs:
           path: output/multimodel-v1/**
           retention-days: 7
           if-no-files-found: error
+
+# Manual trigger marker: 2026-09-11 Day-1 comparison run
