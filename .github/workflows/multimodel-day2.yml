@@ -1,0 +1,57 @@
+name: Multimodel GFS ECMWF Day 2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/generate_multimodel_day2.py"
+      - ".github/workflows/multimodel-day2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[grib,dev]" matplotlib cartopy ecmwf-opendata
+      - name: Unit tests
+        run: pytest -q
+      - name: Generate GFS + ECMWF Day-2
+        env:
+          PYTHONPATH: backend
+        run: python scripts/generate_multimodel_day2.py --hours 24,30,36,42,48
+      - name: Render GFS, ECMWF and consensus Day-2
+        env:
+          PYTHONPATH: backend
+        run: |
+          OUTDIR=$(find output/multimodel-day2 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+          python scripts/render_model_day1_v3.py \
+            "$OUTDIR/gfs_day2_v3.nc" \
+            "$OUTDIR/brazil_gfs_day2_outlook.png" \
+            --manifest "$OUTDIR/manifest.json" --model "GFS-DAY2"
+          python scripts/render_model_day1_v3.py \
+            "$OUTDIR/ecmwf_day2_v3.nc" \
+            "$OUTDIR/brazil_ecmwf_day2_outlook.png" \
+            --manifest "$OUTDIR/manifest.json" --model "ECMWF-DAY2"
+          python scripts/render_multimodel_day1_v1.py \
+            "$OUTDIR/multimodel_day2_consensus_v1.nc" \
+            "$OUTDIR/brazil_gfs_ecmwf_day2_consensus_outlook.png" \
+            --manifest "$OUTDIR/manifest.json"
+      - name: Upload Day-2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: multimodel-gfs-ecmwf-day2
+          path: output/multimodel-day2/**
+          retention-days: 7
+          if-no-files-found: error
