@@ -13,7 +13,7 @@ from app.models.ecmwf import ECMWFAdapter
 from app.models.gfs import GFSAdapter
 from app.ensemble.multimodel_v1 import multimodel_consensus
 
-DEFAULT_HOURS = (24, 30, 36, 42, 48)
+DEFAULT_HOURS = tuple(range(24, 49, 3))
 
 
 def parse_args() -> argparse.Namespace:
