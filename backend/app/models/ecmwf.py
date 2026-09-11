@@ -39,8 +39,10 @@ class ECMWFAdapter(ModelAdapter):
         return value.astimezone(timezone.utc)
 
     def discover_forecast_hours(self, cycle: datetime) -> list[int]:
-        # Open IFS has at least 3-hourly deterministic output through Day 1.
-        return list(range(0, 25, 3))
+        # Public deterministic IFS output is available at 3-hour intervals
+        # through the medium range. Keep discovery broad enough for Day 2+
+        # workflows rather than artificially stopping at F024.
+        return list(range(0, 145, 3))
 
     def download(self, cycle: datetime, forecast_hours: Iterable[int], destination: Path) -> list[Path]:
         destination.mkdir(parents=True, exist_ok=True)
@@ -77,7 +79,6 @@ class ECMWFAdapter(ModelAdapter):
         for path in paths:
             for native in cfgrib.open_datasets(str(path), backend_kwargs={"indexpath": ""}):
                 prepared = _prepare_cfgrib_group(native)
-                # ECMWF uses short names 2t/2d/10u/10v in some cfgrib builds.
                 renames = {}
                 for old, new in {
                     "t2m": "temperature_2m", "d2m": "dewpoint_2m",
