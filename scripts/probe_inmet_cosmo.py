@@ -1,49 +1,61 @@
 from __future__ import annotations
 
 from ftplib import FTP
+import re
+from urllib.request import Request, urlopen
+from urllib.parse import urljoin
 
 HOST = "ftp.inmet.gov.br"
 ROOT = "/cosmo"
+VIME = "https://vime.inmet.gov.br/"
 
 
-def list_dir(ftp: FTP, path: str, depth: int = 0, max_depth: int = 2) -> None:
-    indent = "  " * depth
-    print(f"{indent}{path}")
-    try:
-        entries = list(ftp.mlsd(path))
-    except Exception as exc:
-        print(f"{indent}MLSD failed: {exc}")
+def fetch(url: str) -> str:
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(req, timeout=30) as r:
+        data = r.read()
+    return data.decode("utf-8", "ignore")
+
+
+def probe_vime() -> None:
+    print("=== VIME WEB PROBE ===")
+    html = fetch(VIME)
+    print("INDEX", html[:3000])
+    assets = re.findall(r'(?:src|href)=["\']([^"\']+\.(?:js|json))["\']', html)
+    print("ASSETS", assets)
+    for asset in assets[:20]:
+        url = urljoin(VIME, asset)
         try:
-            old = ftp.pwd()
-            ftp.cwd(path)
-            names = ftp.nlst()
-            ftp.cwd(old)
-            entries = [(n, {}) for n in names]
-        except Exception as exc2:
-            print(f"{indent}NLST failed: {exc2}")
-            return
+            text = fetch(url)
+        except Exception as exc:
+            print("ASSET FAIL", url, exc)
+            continue
+        print("ASSET", url, "LEN", len(text))
+        hits = sorted(set(re.findall(r'https?://[^"\'\\\s]+|/[A-Za-z0-9_./-]*(?:api|cosmo|modelo|model)[A-Za-z0-9_?=&./-]*', text, re.I)))
+        for h in hits[:150]:
+            print("HIT", h[:500])
 
-    for name, facts in entries[:120]:
-        typ = facts.get("type", "?")
-        size = facts.get("size", "")
-        modify = facts.get("modify", "")
-        print(f"{indent}- {name} type={typ} size={size} modify={modify}")
 
-    if depth >= max_depth:
-        return
-    for name, facts in entries[:120]:
-        if facts.get("type") == "dir" and name not in {".", ".."}:
-            child = path.rstrip("/") + "/" + name
-            list_dir(ftp, child, depth + 1, max_depth)
+def probe_ftp() -> None:
+    print("=== FTP PROBE ===")
+    ftp = FTP(HOST, timeout=30)
+    try:
+        ftp.login()
+        print("WELCOME", ftp.getwelcome())
+        print("PWD", ftp.pwd())
+        print("NLST", ftp.nlst(ROOT)[:100])
+        ftp.quit()
+    except Exception as exc:
+        print("FTP FAILED", repr(exc))
+        try:
+            ftp.close()
+        except Exception:
+            pass
 
 
 def main() -> None:
-    ftp = FTP(HOST, timeout=30)
-    ftp.login()
-    print("WELCOME", ftp.getwelcome())
-    print("PWD", ftp.pwd())
-    list_dir(ftp, ROOT)
-    ftp.quit()
+    probe_ftp()
+    probe_vime()
 
 
 if __name__ == "__main__":
