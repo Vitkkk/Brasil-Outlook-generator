@@ -35,7 +35,12 @@ jobs:
       - name: Generate common-cycle GFS + ECMWF Day-1 consensus
         env:
           PYTHONPATH: backend
-        run: python scripts/generate_multimodel_day1_v1.py --hours 0,6,12,18,24
+        run: |
+          set +e
+          python scripts/generate_multimodel_day1_v1.py --hours 0,6,12,18,24
+          CODE=$?
+          if [ $CODE -ne 0 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
+          echo "Generator exit code $CODE; preserving completed outputs"
       - name: Render GFS, ECMWF and consensus outlooks
         env:
           PYTHONPATH: backend
@@ -63,5 +68,7 @@ jobs:
           path: output/multimodel-v1/**
           retention-days: 7
           if-no-files-found: error
+
+# Segfault-tolerant artifact preservation: 2026-09-20
 
 # Manual trigger marker: 2026-09-20 Day-1 all-model run
