@@ -31,7 +31,12 @@ jobs:
       - name: Generate GFS + ECMWF Day-2
         env:
           PYTHONPATH: backend
-        run: python scripts/generate_multimodel_day2.py --hours 24,27,30,33,36,39,42,45,48
+        run: |
+          set +e
+          python scripts/generate_multimodel_day2.py --hours 24,27,30,33,36,39,42,45,48
+          CODE=$?
+          if [ $CODE -ne 0 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
+          echo "Generator exit code $CODE; preserving completed Day-2 outputs"
       - name: Render GFS, ECMWF and consensus Day-2
         env:
           PYTHONPATH: backend
@@ -56,3 +61,5 @@ jobs:
           path: output/multimodel-day2/**
           retention-days: 7
           if-no-files-found: error
+
+# manual run 2026-09-20 for 2026-09-21
