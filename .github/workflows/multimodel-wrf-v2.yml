@@ -66,3 +66,5 @@ jobs:
           path: output/multimodel-wrf-v2/**
           retention-days: 7
           if-no-files-found: error
+
+# Manual trigger marker: 2026-09-20 Day-1 all-model run
