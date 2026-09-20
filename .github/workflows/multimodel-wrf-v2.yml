@@ -33,7 +33,12 @@ jobs:
       - name: Generate GFS + ECMWF + CPTEC WRF Day-1
         env:
           PYTHONPATH: backend
-        run: python scripts/generate_multimodel_day1_v2_wrf.py --hours 0,6,12,18,24
+        run: |
+          set +e
+          python scripts/generate_multimodel_day1_v2_wrf.py --hours 0,6,12,18,24
+          CODE=$?
+          if [ $CODE -ne 0 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
+          echo "Generator exit code $CODE; preserving completed outputs"
       - name: Render GFS, ECMWF, WRF and three-model consensus
         env:
           PYTHONPATH: backend
@@ -66,5 +71,7 @@ jobs:
           path: output/multimodel-wrf-v2/**
           retention-days: 7
           if-no-files-found: error
+
+# Segfault-tolerant artifact preservation: 2026-09-20
 
 # Manual trigger marker: 2026-09-20 Day-1 all-model run
