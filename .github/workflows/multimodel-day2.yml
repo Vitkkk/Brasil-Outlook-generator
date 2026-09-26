@@ -35,7 +35,7 @@ jobs:
           set +e
           python scripts/generate_multimodel_day2.py --hours 24,27,30,33,36,39,42,45,48
           CODE=$?
-          if [ $CODE -ne 0 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
+          if [ $CODE -ne 0 ] && [ $CODE -ne 134 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
           echo "Generator exit code $CODE; preserving completed Day-2 outputs"
       - name: Render GFS, ECMWF and consensus Day-2
         env:
@@ -65,3 +65,5 @@ jobs:
 # manual run 2026-09-20 for 2026-09-21
 
 # manual Day-2 run 2026-09-26 for 2026-09-27
+
+# tolerate cfgrib/ecCodes abort 134 after completed output writes
