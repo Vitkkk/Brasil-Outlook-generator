@@ -73,3 +73,5 @@ jobs:
 # tolerate cfgrib/ecCodes abort 134 after completed output writes
 
 # manual PREVOTS-style Day-2 run 2026-10-07 for 2026-10-08
+
+# manual Day-2 run 2026-10-07 for 2026-10-08
