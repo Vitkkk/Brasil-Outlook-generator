@@ -54,6 +54,10 @@ jobs:
             "$OUTDIR/multimodel_day2_consensus_v1.nc" \
             "$OUTDIR/brazil_gfs_ecmwf_day2_consensus_outlook.png" \
             --manifest "$OUTDIR/manifest.json"
+          python scripts/render_prevots_mode.py \
+            "$OUTDIR/multimodel_day2_consensus_v1.nc" \
+            "$OUTDIR/brazil_prevots_mode_day2.png" \
+            --manifest "$OUTDIR/manifest.json" --model "CONSENSUS"
       - name: Upload Day-2 artifact
         uses: actions/upload-artifact@v4
         with:
@@ -67,3 +71,5 @@ jobs:
 # manual Day-2 run 2026-09-26 for 2026-09-27
 
 # tolerate cfgrib/ecCodes abort 134 after completed output writes
+
+# manual PREVOTS-style Day-2 run 2026-10-07 for 2026-10-08
