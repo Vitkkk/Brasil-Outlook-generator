@@ -17,9 +17,9 @@ from app.config import get_config
 from app.outlook.categories import categorical_outlook
 from app.outlook.land_mask import mask_dataarray_to_land
 from app.outlook.presentation import coherent_mask
+from app.outlook.prevots_mode import prevots_severity_levels
 
-# Automatic "PREVOTS-style" presentation mode. This is intentionally branded as
-# AUTOMATIC / NON-OFFICIAL and does not use the PREVOTS logo.
+
 LEVEL_COLORS = {
     1: "#b8eea5",  # Tempestades
     2: "#fff20a",  # Nivel 1
@@ -50,18 +50,18 @@ CITIES = [
     ("Pelotas",-31.77,-52.34),
 ]
 
+
 def xy(da):
     lon=np.asarray(da.longitude); lat=np.asarray(da.latitude)
     if lon.ndim==1 and lat.ndim==1:
         return np.meshgrid(lon,lat)
     return lon,lat
 
-def auto_levels(ds,cfg):
+
+def fallback_levels(ds,cfg):
     cat = categorical_outlook(ds.severe, ds.thunderstorm, cfg.risk_thresholds).astype(float)
     cat = mask_dataarray_to_land(cat)
     a = np.asarray(cat)
-    # Compress SPC-like six codes into the five-level PREVOTS-like visual scale:
-    # TSTM -> Tempestades; MRGL -> L1; SLGT -> L2; ENH -> L3; MDT/HIGH -> L4.
     out=np.full_like(a,np.nan,dtype=float)
     out[np.isfinite(a) & (a>=1)] = 1
     out[np.isfinite(a) & (a>=2)] = 2
@@ -70,6 +70,44 @@ def auto_levels(ds,cfg):
     out[np.isfinite(a) & (a>=5)] = 5
     return xr.DataArray(out,coords=cat.coords,dims=cat.dims)
 
+
+def cleaned_levels(levels: xr.DataArray) -> xr.DataArray:
+    """Presentation cleanup while preserving strict nesting.
+
+    The old renderer cleaned every threshold independently and then painted five
+    separate binary contour fills. Morphological closing could make a stronger
+    level extend outside a weaker one, creating visible white/orange slivers.
+    Here all masks are forced to remain nested and the final raster is filled in
+    one discrete contourf call.
+    """
+    raw=np.asarray(levels)
+    masks={}
+    params={
+        1:(1,8),
+        2:(1,6),
+        3:(1,4),
+        4:(2,3),
+        5:(2,4),
+    }
+    for lev in range(1,6):
+        closing,min_cells=params[lev]
+        masks[lev]=coherent_mask(
+            np.isfinite(raw)&(raw>=lev),
+            closing_iterations=closing,
+            min_component_cells=min_cells,
+        )
+
+    # Stronger categories must be a subset of every weaker category.
+    for lev in range(4,0,-1):
+        masks[lev] = masks[lev] | masks[lev+1]
+
+    out=np.zeros(raw.shape,dtype=np.int8)
+    for lev in range(1,6):
+        out[masks[lev]]=lev
+    out=np.where(out>0,out,np.nan)
+    return xr.DataArray(out,coords=levels.coords,dims=levels.dims)
+
+
 def draw_city(ax,name,lat,lon):
     ax.scatter(lon,lat,s=62,facecolor="white",edgecolor="#222",linewidth=.9,
                transform=ccrs.PlateCarree(),zorder=12)
@@ -77,8 +115,8 @@ def draw_city(ax,name,lat,lon):
               transform=ccrs.PlateCarree(),zorder=13)
     t.set_path_effects([pe.withStroke(linewidth=2.4,foreground="white")])
 
+
 def draw_scale(ax):
-    # visual 0-100-200 km scale near southern Brazil; approximate geodesic width
     y=-32.15; x=-49.0; dlon=2.15
     ax.add_patch(Rectangle((x,y),dlon/2,.38,facecolor="black",edgecolor="black",
                            transform=ccrs.PlateCarree(),zorder=20))
@@ -87,6 +125,7 @@ def draw_scale(ax):
     ax.text(x,y+.58,"0",fontsize=9,ha="center",transform=ccrs.PlateCarree(),zorder=21)
     ax.text(x+dlon/2,y+.58,"100",fontsize=9,ha="center",transform=ccrs.PlateCarree(),zorder=21)
     ax.text(x+dlon,y+.58,"200 km",fontsize=9,ha="center",transform=ccrs.PlateCarree(),zorder=21)
+
 
 def draw_north_arrow(ax):
     x,y=.945,.935
@@ -97,18 +136,32 @@ def draw_north_arrow(ax):
     ax.add_patch(Polygon(inner,closed=True,facecolor="#c8c8c8",edgecolor="black",lw=.8,
                          transform=ax.transAxes,zorder=31))
 
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("netcdf")
     p.add_argument("output")
     p.add_argument("--manifest",required=True)
     p.add_argument("--model",default="CONSENSUS")
+    p.add_argument("--gfs-netcdf")
+    p.add_argument("--ecmwf-netcdf")
     a=p.parse_args()
 
     ds=xr.open_dataset(a.netcdf)
     cfg=get_config()
     manifest=json.loads(Path(a.manifest).read_text())
-    levels=auto_levels(ds,cfg)
+
+    if a.gfs_netcdf and a.ecmwf_netcdf:
+        gfs=xr.open_dataset(a.gfs_netcdf)
+        ecmwf=xr.open_dataset(a.ecmwf_netcdf)
+        levels=prevots_severity_levels(ds,gfs,ecmwf)
+        engine="PREVOTS-like dedicado"
+    else:
+        levels=fallback_levels(ds,cfg)
+        engine="fallback categórico"
+
+    levels=mask_dataarray_to_land(levels.astype(float))
+    levels=cleaned_levels(levels)
     lon,lat=xy(levels)
     val=np.asarray(levels)
 
@@ -119,23 +172,34 @@ def main():
     ax.add_feature(cfeature.OCEAN.with_scale("50m"),facecolor="#dfeaf4",zorder=0)
     ax.add_feature(cfeature.LAND.with_scale("50m"),facecolor="#f2f0ed",zorder=0)
     ax.add_feature(cfeature.LAKES.with_scale("50m"),facecolor="#dfeaf4",edgecolor="#b9c8d4",lw=.3,zorder=1)
-
-    # faint terrain-like wash without external tiles
     try:
         ax.stock_img()
     except Exception:
         pass
 
-    # Draw nested severity polygons.
+    # ONE categorical fill prevents the white/orange slivers seen when each
+    # nested level was painted independently.
+    masked=np.ma.masked_invalid(val)
+    ax.contourf(
+        lon,lat,masked,
+        levels=[.5,1.5,2.5,3.5,4.5,5.5],
+        colors=[LEVEL_COLORS[i] for i in range(1,6)],
+        alpha=.66,
+        antialiased=False,
+        transform=ccrs.PlateCarree(),
+        zorder=4,
+    )
+
+    # Draw category boundaries after the unified fill.
     for lev in range(1,6):
         m=np.isfinite(val)&(val>=lev)
-        m=coherent_mask(m,closing_iterations=2 if lev>=4 else 1,min_component_cells=1 if lev>=4 else 3)
         if not m.any():
             continue
-        ax.contourf(lon,lat,np.where(m,1,np.nan),levels=[.5,1.5],
-                    colors=[LEVEL_COLORS[lev]],alpha=.62,transform=ccrs.PlateCarree(),zorder=3+lev)
-        ax.contour(lon,lat,m.astype(float),levels=[.5],colors=[LEVEL_COLORS[lev]],
-                   linewidths=1.2,transform=ccrs.PlateCarree(),zorder=4+lev)
+        ax.contour(
+            lon,lat,m.astype(float),levels=[.5],
+            colors=[LEVEL_COLORS[lev]],linewidths=1.15,
+            transform=ccrs.PlateCarree(),zorder=10,
+        )
 
     ax.add_feature(cfeature.COASTLINE.with_scale("50m"),linewidth=.65,edgecolor="#555",zorder=11)
     ax.add_feature(cfeature.BORDERS.with_scale("50m"),linewidth=.75,edgecolor="#555",zorder=11)
@@ -156,11 +220,9 @@ def main():
     draw_north_arrow(ax)
     draw_scale(ax)
 
-    # Neighbor-country labels
     for text_,x,y in [("Bolívia",-60.3,-18.1),("Paraguai",-58.7,-23.0),("Argentina",-59.0,-28.7),("Uruguai",-56.5,-33.0)]:
         ax.text(x,y,text_,fontsize=9,fontweight="bold",color="#666",transform=ccrs.PlateCarree(),zorder=15)
 
-    # Legend box matching the visual hierarchy of the supplied examples.
     handles=[Patch(facecolor=LEVEL_COLORS[i],edgecolor=LEVEL_COLORS[i],label=LEVEL_NAMES[i]) for i in range(1,6)]
     leg=ax.legend(handles=handles,loc="lower right",bbox_to_anchor=(.986,.115),fontsize=10.8,
                   title="Níveis de Severidade",title_fontsize=13.0,frameon=True,fancybox=False,
@@ -172,14 +234,18 @@ def main():
     try:
         date=datetime.fromisoformat(valid.replace("Z","+00:00")).strftime("%d/%m/%Y")
     except Exception:
-        date="29/09/2026"
+        date=""
 
     fig.suptitle(f"PREVISÃO AUTOMÁTICA DE TEMPO SEVERO - {date} (*)",
                  fontsize=19.5,fontweight="bold",y=.962)
     fig.text(.035,.035,"(*) Produto automático experimental — NÃO OFICIAL.",fontsize=10.6,fontweight="bold")
-    fig.text(.945,.035,"Modo PREVOTS-style • GFS + ECMWF",fontsize=8.4,ha="right",color="#555")
+    sample=manifest.get("sampling_interval_hours")
+    window_note="12Z–12Z"
+    if sample:
+        window_note += f" • {sample} h"
+    fig.text(.945,.035,f"Modo PREVOTS-style • GFS + ECMWF • {window_note} • {engine}",
+             fontsize=7.8,ha="right",color="#555")
 
-    # Auto badge instead of PREVOTS branding/logo.
     fig.text(.842,.115,"AUTO\nSEVERE",ha="center",va="center",fontsize=18,fontweight="bold",
              bbox=dict(boxstyle="square,pad=.45",facecolor="white",edgecolor="#222",linewidth=1.2))
 
@@ -188,6 +254,7 @@ def main():
     fig.savefig(out,facecolor="white",bbox_inches="tight")
     plt.close(fig)
     print(out)
+
 
 if __name__=="__main__":
     main()
