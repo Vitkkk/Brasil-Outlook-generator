@@ -12,6 +12,8 @@ on:
       - "scripts/render_multimodel_day1_v1.py"
       - "scripts/render_model_day1_v3.py"
       - "scripts/render_prevots_mode.py"
+      - "scripts/generate_multimodel_prevots_day1.py"
+      - "backend/app/outlook/prevots_mode.py"
       - ".github/workflows/multimodel-v1.yml"
 
 permissions:
@@ -42,6 +44,15 @@ jobs:
           CODE=$?
           if [ $CODE -ne 0 ] && [ $CODE -ne 134 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
           echo "Generator exit code $CODE; preserving completed outputs"
+      - name: Generate PREVOTS-style 12Z-to-12Z guidance
+        env:
+          PYTHONPATH: backend
+        run: |
+          set +e
+          python scripts/generate_multimodel_prevots_day1.py
+          CODE=$?
+          if [ $CODE -ne 0 ] && [ $CODE -ne 134 ] && [ $CODE -ne 139 ]; then exit $CODE; fi
+          echo "PREVOTS generator exit code $CODE; preserving completed outputs"
       - name: Render GFS, ECMWF and consensus outlooks
         env:
           PYTHONPATH: backend
@@ -63,15 +74,20 @@ jobs:
             "$OUTDIR/brazil_gfs_ecmwf_consensus_day1_outlook.png" \
             --manifest "$OUTDIR/manifest.json"
 
+          PREVOUT=$(find output/prevots-mode -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
           python scripts/render_prevots_mode.py \
-            "$OUTDIR/multimodel_day1_consensus_v1.nc" \
-            "$OUTDIR/brazil_prevots_mode_day1.png" \
-            --manifest "$OUTDIR/manifest.json" --model "CONSENSUS"
+            "$PREVOUT/multimodel_prevots_consensus_v1.nc" \
+            "$PREVOUT/brazil_prevots_mode_day1.png" \
+            --manifest "$PREVOUT/manifest.json" --model "CONSENSUS" \
+            --gfs-netcdf "$PREVOUT/gfs_prevots_day1_v3.nc" \
+            --ecmwf-netcdf "$PREVOUT/ecmwf_prevots_day1_v3.nc"
       - name: Upload multimodel artifact
         uses: actions/upload-artifact@v4
         with:
           name: multimodel-consensus-v1
-          path: output/multimodel-v1/**
+          path: |
+            output/multimodel-v1/**
+            output/prevots-mode/**
           retention-days: 7
           if-no-files-found: error
 
@@ -90,3 +106,5 @@ jobs:
 # manual PREVOTS-style Day-1 run 2026-10-03
 
 # manual PREVOTS-style Day-1 run 2026-10-07
+
+# PREVOTS calibration + 12Z window + unified fill 2026-10-07
